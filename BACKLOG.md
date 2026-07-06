@@ -1,10 +1,5 @@
 # Backlog
 
-> Outstanding features and bug fixes. Living document — move items to done or
-> delete as they land. See [DESIGN.md](DESIGN.md) for the overall design.
-
----
-
 ## Bugs
 
 ### Race in `do_hide_context_windows` can drop a window from tracking
