@@ -1,0 +1,32 @@
+{
+    "name": "context-manager",
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "tauri": "tauri",
+        "fmt": "biome format --write src",
+        "fmt:check": "biome format src",
+        "lint": "biome lint src",
+        "check": "svelte-check"
+    },
+    "dependencies": {
+        "@tauri-apps/api": "^2",
+        "@tauri-apps/plugin-global-shortcut": "^2",
+        "svelte-dnd-action": "^0.9"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^1.9",
+        "@sveltejs/vite-plugin-svelte": "^5",
+        "@tauri-apps/cli": "^2",
+        "svelte": "^5",
+        "svelte-check": "^4",
+        "typescript": "^5",
+        "vite": "^6"
+    },
+    "allowScripts": {
+        "@biomejs/biome@1.9.4": true
+    }
+}

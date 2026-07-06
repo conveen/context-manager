@@ -1,0 +1,75 @@
+name: run-ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  # Allow another workflow to invoke this one as a reusable workflow
+  workflow_call:
+  # Allow manual runs from the Actions tab
+  workflow_dispatch:
+
+# Default-deny at the workflow level
+permissions: {}
+
+# Collapse superseded runs for the same PR / ref
+concurrency:
+  group: run-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # Head-branch prefix cannot be expressed in the event `branches:` filter
+    # (that matches the *base* branch), so gate here. `head_ref` is only set for
+    # pull_request events; let workflow_call / workflow_dispatch through.
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.head_ref, 'fix/') ||
+      startsWith(github.head_ref, 'feat/')
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # run.sh is a bash entrypoint; force bash so it also works on Windows
+    # runners (whose default shell is PowerShell).
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Do not write the GITHUB_TOKEN into .git/config; nothing here pushes,
+          # and this keeps the token out of reach of later steps / build code.
+          persist-credentials: false
+
+      - name: Install Node.js and npm
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Install Rust toolchain (clippy + rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+          rustc --version
+          cargo --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check code for errors
+        run: ./run.sh -l check
+
+      - name: Check formatting
+        run: ./run.sh -l fmt-check
+
+      - name: Lint code
+        run: ./run.sh -l lint
+
+      - name: Build application
+        run: ./run.sh -l exec npm run tauri build -- --no-bundle --ci

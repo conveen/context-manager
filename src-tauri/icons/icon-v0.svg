@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Back window (blue) -->
+  <rect x="180" y="140" width="580" height="520" rx="48" ry="48" fill="#1A1A2E" stroke="#00B4FF" stroke-width="28" opacity="0.85"/>
+  
+  <!-- Middle window (cyan) -->
+  <rect x="240" y="180" width="580" height="520" rx="48" ry="48" fill="#1A1A2E" stroke="#00E5FF" stroke-width="28" opacity="0.92"/>
+  
+  <!-- Front window (green) -->
+  <rect x="300" y="220" width="580" height="520" rx="48" ry="48" fill="#1A1A2E" stroke="#00FF9F" stroke-width="28"/>
+  
+  <!-- Front window top bar -->
+  <rect x="320" y="240" width="540" height="48" rx="12" fill="#0F0F1F"/>
+  
+  <!-- Traffic lights -->
+  <circle cx="350" cy="260" r="12" fill="#C084FC"/>
+  <circle cx="390" cy="260" r="12" fill="#60A5FA"/>
+  <circle cx="430" cy="260" r="12" fill="#60A5FA"/>
+  
+  <!-- Sidebar divider -->
+  <line x1="400" y1="288" x2="400" y2="720" stroke="#334155" stroke-width="4"/>
+  
+  <!-- Sidebar green dots -->
+  <circle cx="360" cy="340" r="14" fill="#22FF88"/>
+  <circle cx="360" cy="400" r="14" fill="#22FF88"/>
+  <circle cx="360" cy="460" r="14" fill="none" stroke="#22FF88" stroke-width="4"/>
+  <circle cx="360" cy="520" r="14" fill="#22FF88"/>
+  
+  <!-- Content bars -->
+  <rect x="450" y="320" width="340" height="28" rx="8" fill="#475569"/>
+  <rect x="450" y="380" width="310" height="28" rx="8" fill="#475569"/>
+  <rect x="450" y="440" width="355" height="28" rx="8" fill="#475569"/>
+  <rect x="450" y="500" width="280" height="28" rx="8" fill="#475569"/>
+  <rect x="450" y="560" width="325" height="28" rx="8" fill="#475569"/>
+  <rect x="450" y="620" width="295" height="28" rx="8" fill="#475569"/>
+  
+  <!-- Glow layers -->
+  <!-- <rect x="180" y="140" width="580" height="520" rx="48" ry="48" fill="none" stroke="#00B4FF" stroke-width="42" opacity="0.12"/> -->
+  <!-- <rect x="240" y="180" width="580" height="520" rx="48" ry="48" fill="none" stroke="#00E5FF" stroke-width="38" opacity="0.15"/> -->
+  <!-- <rect x="300" y="220" width="580" height="520" rx="48" ry="48" fill="none" stroke="#00FF9F" stroke-width="36" opacity="0.18"/> -->
+</svg>

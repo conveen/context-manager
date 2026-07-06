@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+target/
+
+# Tauri generated files
+src-tauri/gen/
+
+# Coverage
+*.profraw
+lcov.info
+
+# OS
+.DS_Store
+Thumbs.db
