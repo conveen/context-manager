@@ -155,7 +155,7 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 /// is invalid or the window has already been destroyed the OS ignores it.
 pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
     unsafe {
-        let _ = ShowWindow(HWND(window.platform_id as isize), SW_HIDE);
+        let _ = ShowWindow(HWND(window.platform_id as *mut _), SW_HIDE);
     }
     Ok(())
 }
@@ -171,7 +171,7 @@ pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
 /// Always returns `Ok(())` for the same reason as `hide_window`.
 pub fn show_window(window: &mut WindowRef) -> Result<(), String> {
     unsafe {
-        let _ = ShowWindow(HWND(window.platform_id as isize), SW_SHOW);
+        let _ = ShowWindow(HWND(window.platform_id as *mut _), SW_SHOW);
     }
     window.original_position = None;
     Ok(())
