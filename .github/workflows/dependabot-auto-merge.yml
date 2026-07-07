@@ -1,0 +1,58 @@
+name: dependabot-auto-merge
+
+# Enables GitHub's native auto-merge on Dependabot pull requests, restricted to
+# patch/minor updates and to major updates that are themselves security fixes.
+# The actual merge only completes once required status checks pass — this
+# workflow assumes `run-ci` is configured as a required status check in branch
+# protection for `master` (see .github/THREAT-MODEL.md).
+#
+# Security posture (see .github/THREAT-MODEL.md for the full analysis):
+#   * Scoped to the `master` branch only, matching the branch where the
+#     required-status-check protection above must be configured — Dependabot's
+#     own PRs target it by default since no `target-branch` override is set in
+#     dependabot.yml.
+#   * Restricted to `github.actor == 'dependabot[bot]'`, a field GitHub sets
+#     itself from the authenticated PR author — not something PR content or a
+#     third party can spoof.
+#   * Never runs `actions/checkout` and never executes any code from the PR:
+#     the only actions taken are read-only metadata lookup and a merge API
+#     call, so there is nothing here for untrusted PR content to compromise,
+#     which is what makes `pull_request_target`'s elevated token safe to use.
+#   * Only official, SHA-pinned actions.
+#   * Merge type is fixed to `--squash`; no other merge strategy is exposed.
+on:
+  pull_request_target:
+    branches: [master]
+
+# Default-deny at the workflow level; the one job opts in to the minimum needed
+# to inspect and merge a pull request.
+permissions: {}
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        with:
+          github-token: ${{ github.token }}
+          alert-lookup: true
+
+      - name: Enable auto-merge for eligible updates
+        # Patch/minor updates auto-merge unconditionally; major updates only
+        # auto-merge when they are themselves a security fix (a non-empty
+        # ghsa-id, populated by alert-lookup above). A non-security major bump
+        # is left for manual review since it may carry breaking changes.
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          (steps.metadata.outputs.update-type == 'version-update:semver-major' && steps.metadata.outputs.ghsa-id != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # GitHub Actions workflow dependencies (the actions pinned by SHA in
+  # .github/workflows/*.yml).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Rust / Tauri backend dependencies (workspace root Cargo.toml, which
+  # includes the src-tauri member).
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "cargo"
+    labels:
+      - "dependencies"
+      - "rust"
+
+  # Svelte frontend dependencies (root package.json).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "npm"
+    labels:
+      - "dependencies"
+      - "javascript"
