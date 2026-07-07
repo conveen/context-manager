@@ -141,3 +141,70 @@ only auto-merges when it is both classified as low-risk **and** has passed CI.
   completion time; the actor check happens only at the moment this workflow
   runs (PR open/synchronize). This is consistent with Dependabot PRs, which
   cannot be taken over by another author without changing the PR's identity.
+
+---
+
+## Workflow: `release`
+
+**What it is.** [`release.yml`](./workflows/release.yml) builds macOS and
+Windows release bundles, generates Sigstore build-provenance attestations and
+SHA256 checksums for each, and publishes all of it — bundles, checksums, and
+full build logs — as a public GitHub Release.
+
+**Trigger & privilege surface.**
+- Trigger: `push` of a tag matching `v[0-9]+.[0-9]+.[0-9]+` (a loose glob;
+  `verify` re-checks it strictly).
+- Token: default-deny (`permissions: {}`) at the workflow level.
+  `verify`/`build` hold `contents: read`; `build` additionally holds
+  `id-token: write` and `attestations: write` (required by
+  `attest-build-provenance` to mint a Sigstore OIDC identity and record the
+  attestation); only `publish` holds `contents: write` (to create the Release
+  and upload assets).
+- Code executed: the tagged commit's own source, plus pinned official actions
+  and the runner's pre-installed `rustup`. Unlike `run-ci`, there is no
+  "untrusted PR" boundary here — a tag on `master` is, by construction,
+  already-reviewed code (see the `verify` job).
+
+**Trust boundary.** The primary boundary is *"a tag that looks like a release"
+vs. "a commit that actually is one."* `verify` exists specifically to close
+the gap between those two: nothing downstream should trust the tag name alone.
+A secondary, ongoing boundary is *"this job's captured output" vs. "a public
+Release asset"* — because the full build log is now published, this job's
+design goal is to make it structurally impossible for that log to contain a
+secret, rather than relying on redaction.
+
+| STRIDE — Threat | How it applies to `release` | Mitigation |
+|---|---|---|
+| **Spoofing** — A tag crafted to look like a release version but not actually built from reviewed `master` history (e.g. pushed from a fork or a detached local commit). | The tag-push trigger alone only checks the tag *name*; it says nothing about the tag's *commit*. | `verify` independently re-validates the tag as exact semver **and** runs `git merge-base --is-ancestor "$GITHUB_SHA" origin/master` against a full-history checkout, failing the workflow if the tag's commit isn't reachable from `master`. `build`/`publish` both `needs: verify`. |
+| **Tampering** — Script/expression injection via `${{ github.ref_name }}` (the tag name) interpolated into a shell. | The tag name is attacker-influenceable in principle (anyone who can push a tag controls its literal text) and is used to build the log filename and Release title. | The tag is constrained to `^v[0-9]+\.[0-9]+\.[0-9]+$` by `verify` before `build`/`publish` run, so by the time it reaches any `run:` step it can only contain the literal `v`, digits, and dots — no shell metacharacters possible regardless of interpolation style. |
+| **Tampering** — A compromised or buggy build step silently producing no artifact, or the wrong one, that then gets published anyway. | `tauri build` could fail partway, or bundle-glob patterns could stop matching after a Tauri upgrade changes output paths. | `if-no-files-found: error` on every `upload-artifact` step (bundles and log) fails the job loudly rather than publishing an empty or partial Release. `verify`'s CHANGELOG.md extraction similarly fails loudly (`exit 1`) if no matching section is found, rather than publishing with an empty body. |
+| **Repudiation** — Inability to prove what was actually built and published for a given release, or by whom. | Consumers of the released binaries need to verify integrity and origin, not just trust the download. | Each bundle ships with a `.sha256` checksum file and a **Sigstore build-provenance attestation** (`actions/attest-build-provenance`), independently verifiable via `gh attestation verify <file> --owner <org>` without trusting this repo's own claims. The full build log (tool versions + build output) is published alongside for transparency. |
+| **Information disclosure** — The published build log containing a secret. | This is the one workflow in the repo that intentionally publishes a full step's captured output (`tee`'d to `build-output-<os>-v<tag>.log`) as a public Release asset. GitHub's log masking only redacts the *rendered Actions UI* for known `secrets.*` values — it does **not** retroactively scrub bytes a step writes to a local file via redirection, so masking cannot be relied on here. | The mitigation is structural, not redaction: the `build` job **never references `secrets:`** or wires any credential into `env:` anywhere in its steps, so there is nothing secret-bearing available to that process for the captured output to contain. This is called out explicitly in a comment directly above the "Build release bundle" step as a load-bearing invariant for anyone adding to this job later (e.g. code signing) — such a step must keep its own output out of the `tee`'d block. |
+| **Information disclosure** — Leaking `GH_TOKEN` from the `publish` job. | `publish` holds `contents: write` to create the Release. | The token is passed only via `env: GH_TOKEN` to the `gh release create` invocation, never printed, and is scoped to `contents: write` only — no other permissions are granted to that job. |
+| **Denial of service** — Duplicate or overlapping runs for the same tag (e.g. a tag force-pushed/re-pushed). | Re-publishing the same version could conflict with an existing Release or double-charge runner minutes. | `concurrency: group: release-${{ github.ref_name }}` serializes runs per tag; `cancel-in-progress: false` so an in-progress publish is never killed mid-way (which could leave a Release partially published). |
+| **Elevation of privilege** — An over-permissioned `GITHUB_TOKEN` in the build phase enabling unintended writes. | Only `publish` needs write access; `build`/`verify` do not. | `build`/`verify` are held to `contents: read` (plus `build`'s narrow `id-token`/`attestations` grants); write access exists only in `publish`, and only for the duration of that one job. |
+| **Elevation of privilege** — Unsigned binaries being trusted as if they were signed/notarized. | Neither the macOS `.dmg` nor the Windows `.msi`/`.exe` are code-signed or notarized by this workflow — no signing secrets are configured. | Out of scope for this workflow by design (see residual risk below); the Sigstore attestation proves *provenance* (this repo/workflow built this exact artifact) but is not a substitute for OS-level code signing, which affects Gatekeeper/SmartScreen warnings independently. |
+
+### Residual risk & assumptions
+
+- **No code signing or notarization.** Bundles are unsigned; users will see
+  Gatekeeper (macOS) and SmartScreen (Windows) warnings on install. Adding
+  signing would introduce the first secrets this pipeline has ever held
+  (Apple Developer certificate/notarization credentials, a Windows Authenticode
+  certificate) — if added, keep that step's output **out of** the `tee`'d,
+  publicly-logged block in the `build` job (see the Information disclosure row
+  above), since the structural "no secrets in this job" guarantee the log's
+  publication relies on would no longer hold otherwise.
+- **`verify`'s ancestry check trusts `origin/master` at fetch time.** A
+  `force-push` to `master` between the tag being created and this workflow
+  running could change what "reachable from master" means. This is an
+  inherent property of comparing against a moving branch and is accepted as-is;
+  `master` is protected (see the `run-ci` and `dependabot-auto-merge` sections
+  above), which limits who can rewrite it in the first place.
+- **Sigstore attestation proves build provenance, not code quality or
+  safety.** It answers "did this repo's `release` workflow build this exact
+  file," not "is this file safe" — a maliciously merged commit that passed
+  `run-ci` would still get a valid attestation for the resulting artifact.
+- **CHANGELOG.md accuracy is trusted as-authored.** The Release body is a
+  verbatim copy of whatever a human wrote under the matching `## [X.Y.Z]`
+  heading; this workflow does not validate its content, only its presence.
