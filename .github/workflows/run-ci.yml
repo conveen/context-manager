@@ -21,10 +21,14 @@ jobs:
     # Head-branch prefix cannot be expressed in the event `branches:` filter
     # (that matches the *base* branch), so gate here. `head_ref` is only set for
     # pull_request events; let workflow_call / workflow_dispatch through.
+    # `dependabot/` covers all ecosystems configured in dependabot.yml (Dependabot
+    # names every branch it creates with this prefix, e.g.
+    # `dependabot/npm_and_yarn/...`, `dependabot/cargo/...`, `dependabot/github-actions/...`).
     if: >-
       github.event_name != 'pull_request' ||
       startsWith(github.head_ref, 'fix/') ||
-      startsWith(github.head_ref, 'feat/')
+      startsWith(github.head_ref, 'feat/') ||
+      startsWith(github.head_ref, 'dependabot/')
     permissions:
       contents: read
     strategy:
