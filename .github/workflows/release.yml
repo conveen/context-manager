@@ -1,0 +1,208 @@
+name: release
+
+# Builds macOS and Windows release bundles and publishes them as a GitHub
+# Release. Triggered by pushing a plain semver tag (`<major>.<minor>.<patch>`,
+# e.g. `1.2.3` — no `v` prefix, no pre-release suffix) that points at a commit
+# reachable from `master`.
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Independently re-validates the trigger: the tag must be exact semver
+  # (the push-tags glob is close but not battle-tested against edge cases like
+  # pre-release/build-metadata suffixes) and must point to a commit that is
+  # actually reachable from `master`, not merely tag-named to look like one.
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository (full history)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag is exact semver <major>.<minor>.<patch>
+        run: |
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' is not a plain <major>.<minor>.<patch> version" >&2
+            exit 1
+          fi
+
+      - name: Verify tag is reachable from master
+        run: |
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/master; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' (${GITHUB_SHA}) is not reachable from origin/master" >&2
+            exit 1
+          fi
+
+  build:
+    needs: verify
+    permissions:
+      contents: read
+      # Required by actions/attest-build-provenance: id-token to mint a
+      # short-lived Sigstore OIDC signing identity, attestations to record the
+      # resulting attestation against this repository.
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact-name: release-macos
+            # The real shipped binaries — attested and checksummed.
+            artifact-glob: target/release/bundle/dmg/*.dmg
+            # Everything uploaded as the CI artifact for this OS (binaries +
+            # their .sha256 sidecars, generated below).
+            upload-glob: |
+              target/release/bundle/dmg/*.dmg
+              target/release/bundle/dmg/*.dmg.sha256
+          - os: windows-latest
+            artifact-name: release-windows
+            artifact-glob: |
+              target/release/bundle/msi/*.msi
+              target/release/bundle/nsis/*.exe
+            upload-glob: |
+              target/release/bundle/msi/*.msi
+              target/release/bundle/msi/*.msi.sha256
+              target/release/bundle/nsis/*.exe
+              target/release/bundle/nsis/*.exe.sha256
+    runs-on: ${{ matrix.os }}
+    # run.sh is a bash entrypoint; force bash so it also works on Windows
+    # runners (resolves to the Git-for-Windows Git Bash bundled on hosted
+    # Windows runners — same pattern already used in run-ci.yml).
+    defaults:
+      run:
+        shell: bash
+    env:
+      LOG_FILE: build-output-${{ matrix.os }}-v${{ github.ref_name }}.log
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Install Node.js and npm
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # This step's full output (tool versions + the build itself) is
+      # captured verbatim and later published as a Release asset for
+      # transparency. That is only safe because this job never references a
+      # secret or credential anywhere (no `secrets:`/token-bearing `env:` in
+      # this job) — GitHub's log masking only redacts the rendered Actions UI
+      # for values it knows came from `secrets.*`; it does NOT scrub bytes a
+      # step writes to a local file via redirection/`tee`, so a secret used
+      # here (e.g. if code-signing credentials are added later) could leak
+      # into the published log verbatim. If signing is added to this job in
+      # the future, keep any credential-handling step's output out of this
+      # captured block (a separate, non-`tee`'d step).
+      - name: Build release bundle
+        run: |
+          {
+            echo "== Tool versions =="
+            rustc --version
+            cargo --version
+            node --version
+            npm --version
+            npm run tauri -- --version
+            echo
+            echo "== Build =="
+            ./run.sh -l exec npm run tauri build -- --ci
+          } 2>&1 | tee "${LOG_FILE}"
+
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: ${{ matrix.artifact-glob }}
+
+      - name: Generate SHA256 checksums
+        run: |
+          while IFS= read -r pattern; do
+            [ -z "${pattern}" ] && continue
+            for f in ${pattern}; do
+              [ -e "${f}" ] || continue
+              if command -v sha256sum >/dev/null 2>&1; then
+                ( cd "$(dirname "${f}")" && sha256sum "$(basename "${f}")" ) > "${f}.sha256"
+              else
+                ( cd "$(dirname "${f}")" && shasum -a 256 "$(basename "${f}")" ) > "${f}.sha256"
+              fi
+            done
+          done <<< "${{ matrix.artifact-glob }}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.upload-glob }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-output-${{ matrix.os }}-v${{ github.ref_name }}
+          path: ${{ env.LOG_FILE }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v ver="${GITHUB_REF_NAME}" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! [ -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for '## [${GITHUB_REF_NAME}]' — add one before tagging" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            artifacts/*/*
