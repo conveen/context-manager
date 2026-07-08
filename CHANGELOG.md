@@ -23,3 +23,16 @@ How to cut a release:
 -->
 
 ## [Unreleased]
+
+## [v0.1.0] - 2026-07-08
+
+### Added
+
+- Support for macOS and Windows.
+- A default `main` Context that automatically collects every open window.
+- Create named Contexts and move/copy windows from the `main` Context.
+- Drag-and-drop window assignment from an "Available Windows" list into a Context; hold Shift while dropping to copy a window into multiple Contexts instead of moving it out of `main`.
+- Switch between Contexts via configurable keyboard shortcuts (`Ctrl+Alt+0`-`9` or `Cmd+Opt+0`-`9`), plus `Ctrl+Alt+H`/`Cmd+Opt+H` to hide everything at once.
+- Single Context Mode: switching to a Context automatically hides every other Context's windows, so exactly one Context is ever on screen.
+- macOS menu bar / Windows system tray integration, with the main window minimizing out of the way when not focused.
+- Launch-at-login setting.
