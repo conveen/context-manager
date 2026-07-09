@@ -152,11 +152,30 @@ jobs:
             done
           done <<< "${{ matrix.artifact-glob }}"
 
+      # actions/upload-artifact preserves each matched file's directory
+      # structure relative to the common ancestor of all matched paths. The
+      # windows matrix entry's upload-glob spans two sibling directories
+      # (bundle/msi/ and bundle/nsis/), so without this staging step the
+      # release-windows artifact would come back with a nested msi/nsis
+      # subdirectory layout instead of the flat one-level structure the
+      # `publish` job's `artifacts/*/*` glob expects (release-macos has only
+      # one source directory, so it's flat already and wouldn't reveal this).
+      - name: Stage release files
+        run: |
+          mkdir -p release-assets
+          while IFS= read -r pattern; do
+            [ -z "${pattern}" ] && continue
+            for f in ${pattern}; do
+              [ -e "${f}" ] || continue
+              cp "${f}" release-assets/
+            done
+          done <<< "${{ matrix.upload-glob }}"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.upload-glob }}
+          path: release-assets/*
           if-no-files-found: error
           retention-days: 7
 
