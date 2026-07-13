@@ -28,7 +28,11 @@ pub use macos::raise_window;
 pub struct WindowInfo {
     /// Stable OS-assigned identifier: CGWindowID (macOS) or HWND value (Windows).
     pub platform_id: u64,
-    /// OS process ID of the owning application.
+    /// OS process ID of the owning application. Present only on macOS, where
+    /// it is required to look up the `AXUIElement` for hide/show/raise
+    /// (mirrors `state::WindowRef::pid`). On Windows nothing reads it back
+    /// off the struct, so it stays a local variable in `win32::enumerate`.
+    #[cfg(target_os = "macos")]
     pub pid: u32,
     /// Display name of the owning application (e.g. "Safari", "Slack").
     pub app_name: String,
@@ -53,7 +57,7 @@ pub struct WindowInfo {
 ///
 /// # Invariants
 /// - Every returned `WindowInfo` has a non-empty `window_title`.
-/// - No returned `WindowInfo` has `pid == our_pid`.
+/// - No returned `WindowInfo` is owned by the process identified by `our_pid`.
 pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
     #[cfg(target_os = "macos")]
     {

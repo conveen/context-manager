@@ -79,7 +79,7 @@ unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
     let app_name = process_name(pid).unwrap_or_else(|| "Unknown".to_string());
 
-    data.windows.push(WindowInfo { platform_id: hwnd.0 as u64, pid, app_name, window_title });
+    data.windows.push(WindowInfo { platform_id: hwnd.0 as u64, app_name, window_title });
 
     BOOL(1)
 }
