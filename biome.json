@@ -25,5 +25,18 @@
     },
     "files": {
         "includes": ["**", "!**/node_modules", "!**/dist", "!**/src-tauri"]
-    }
+    },
+    "overrides": [
+        {
+            "includes": ["**/*.svelte"],
+            "linter": {
+                "rules": {
+                    "correctness": {
+                        "noUnusedImports": "off",
+                        "noUnusedVariables": "off"
+                    }
+                }
+            }
+        }
+    ]
 }
