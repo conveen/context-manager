@@ -29,6 +29,16 @@ fn ctx_idx(data: &AppData, id: &str) -> Result<usize, String> {
 /// **Phase 3 (mutation, under lock)** — Mark the Context `visible = false`,
 /// then write the `original_position` captured in Phase 2 back to every copy
 /// of each hidden window across all Contexts. Saves state.
+///
+/// Between Phase 1 and Phase 3, every target's `original_position` is
+/// optimistically set to a sentinel (rather than left `None` until Phase 3)
+/// so the background window poll's hidden-window exemption
+/// (`original_position.is_some()`) covers it for the whole window in which
+/// the OS call is in flight — otherwise a poll firing after the OS-level
+/// minimize but before the write-back would see the window minimized (absent
+/// from the live enumeration) yet still marked not-hidden, and drop it from
+/// tracking entirely. Phase 3 overwrites the sentinel with the real captured
+/// position on success, or reverts it to `None` on failure.
 fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
     let state = app.state::<AppState>();
 
@@ -38,9 +48,10 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
     let z_map: std::collections::HashMap<u64, u32> =
         wm::enumerate(std::process::id()).iter().enumerate().map(|(i, w)| (w.platform_id, i as u32)).collect();
 
-    // Phase 1 — collect under lock
+    // Phase 1 — collect under lock, then optimistically mark the targets
+    // hidden before releasing the lock (see function doc comment).
     let hide_targets: Vec<(u64, crate::state::WindowRef)> = {
-        let data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap();
         let ci = match ctx_idx(&data, ctx_id) {
             Ok(i) => i,
             Err(e) => {
@@ -48,7 +59,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
                 return;
             },
         };
-        data.contexts[ci]
+        let targets: Vec<(u64, crate::state::WindowRef)> = data.contexts[ci]
             .windows
             .iter()
             .filter(|w| {
@@ -58,15 +69,29 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
                     })
             })
             .map(|w| (w.platform_id, w.clone()))
-            .collect()
+            .collect();
+
+        for ctx in &mut data.contexts {
+            for w in &mut ctx.windows {
+                if targets.iter().any(|(id, _)| *id == w.platform_id) {
+                    w.original_position = Some([0.0, 0.0]);
+                }
+            }
+        }
+
+        targets
     };
 
     // Phase 2 — OS calls outside the lock
     let mut hidden: Vec<(u64, Option<[f64; 2]>)> = Vec::with_capacity(hide_targets.len());
+    let mut failed: Vec<u64> = Vec::new();
     for (platform_id, mut win_clone) in hide_targets {
         match wm::hide_window(&mut win_clone) {
             Ok(()) => hidden.push((platform_id, win_clone.original_position)),
-            Err(e) => eprintln!("hide_window({platform_id}): {e}"),
+            Err(e) => {
+                eprintln!("hide_window({platform_id}): {e}");
+                failed.push(platform_id);
+            },
         }
     }
 
@@ -88,6 +113,17 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
                     {
                         w.hidden_z = z_map.get(platform_id).copied();
                     }
+                }
+            }
+        }
+    }
+    // Hide failed: revert the optimistic sentinel so the window isn't left
+    // permanently (and incorrectly) marked hidden.
+    for platform_id in &failed {
+        for ctx in &mut data.contexts {
+            for w in &mut ctx.windows {
+                if w.platform_id == *platform_id {
+                    w.original_position = None;
                 }
             }
         }
