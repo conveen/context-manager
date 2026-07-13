@@ -23,10 +23,8 @@ switching tasks is a single keystroke instead of a manual chore.
 ## Requirements
 
 - **macOS or Windows.**
-- **macOS only:** Context Manager needs Accessibility permission to show and
-  hide windows on your behalf. You'll be prompted to grant this the first
-  time it's needed — it's used only to manage window visibility, nothing
-  else.
+- **macOS only:** Context Manager needs Accessibility _and_ Screen Recording permission to find, show, and hide windows on your behalf. You'll be prompted to grant this the first time it's needed — it's used only to manage window visibility, nothing else. Trust me, I don't want to request these permissions, and I'm looking for an alternative. Restart the app after granting permission.
+  - If you download a macOS release from GitHub, run `xattr -cr <filename>.dmg` to allow running the unsigned application.
 
 ## Getting started
 
