@@ -1,4 +1,5 @@
 use tauri::{Emitter, Manager};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::Code;
 
 use crate::state::{AppData, AppState, Context};
@@ -709,8 +710,15 @@ pub fn get_settings(app: tauri::AppHandle) -> Result<crate::state::Settings, Str
 /// edits (meta key, launch-at-login, toggling the mode off) don't move any
 /// windows. The chosen Context is resolved from `single_context_id`, falling back
 /// to Main when it is unset or names a Context that no longer exists.
+///
+/// Also reconciles the OS login-item registration with `settings.launch_at_login`
+/// via the autostart plugin. Done outside the `AppState` lock (it is an OS call);
+/// a failure here is returned as an error so the Settings UI surfaces it rather
+/// than silently leaving the toggle as a no-op.
 #[tauri::command]
 pub fn update_settings(app: tauri::AppHandle, settings: crate::state::Settings) -> Result<(), String> {
+    let want_autostart = settings.launch_at_login;
+
     // Store settings and decide whether to enforce single-context visibility,
     // all under a brief lock. `show_context` (which re-acquires the lock) is
     // called only after the lock is released.
@@ -733,6 +741,10 @@ pub fn update_settings(app: tauri::AppHandle, settings: crate::state::Settings) 
             None
         }
     };
+
+    let autolaunch = app.autolaunch();
+    let autostart_result = if want_autostart { autolaunch.enable() } else { autolaunch.disable() };
+    autostart_result.map_err(|e| e.to_string())?;
 
     if let Some(id) = enforce_id {
         show_context(app.clone(), id)?;
