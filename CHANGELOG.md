@@ -24,6 +24,10 @@ How to cut a release:
 
 ## [Unreleased]
 
+### Fixed
+
+- Hiding a Context no longer occasionally drops one of its windows from tracking when the background window poll runs at the same moment. ([#38](https://github.com/conveen/context-manager/pull/38))
+
 ## [v0.1.0] - 2026-07-08
 
 ### Added
