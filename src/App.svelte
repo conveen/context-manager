@@ -99,9 +99,17 @@ $effect(() => {
 });
 
 const mainContext = $derived(appData?.contexts.find((c) => c.is_main) ?? null);
-const userContexts = $derived(appData?.contexts.filter((c) => !c.is_main) ?? []);
-// Pin main context at top of sidebar
-const sidebarContexts = $derived(mainContext ? [mainContext, ...userContexts] : userContexts);
+// Two-tier sidebar order: shortcut-assigned contexts first (auto-ordered by
+// shortcut number, so Main — always shortcut 0 — leads), then the unassigned
+// contexts in their manual `order`. Only the second tier is drag-reorderable.
+const sidebarContexts = $derived.by(() => {
+    const all = appData?.contexts ?? [];
+    const assigned = all
+        .filter((c) => c.shortcut_index !== null)
+        .sort((a, b) => (a.shortcut_index ?? 0) - (b.shortcut_index ?? 0));
+    const unassigned = all.filter((c) => c.shortcut_index === null).sort((a, b) => a.order - b.order);
+    return [...assigned, ...unassigned];
+});
 const selectedContext = $derived(appData?.contexts.find((c) => c.id === selectedId) ?? null);
 
 async function handleCreate() {

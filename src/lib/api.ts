@@ -12,6 +12,9 @@ export const deleteContext = (id: string) => invoke<void>("delete_context", { id
 // Tauri v2 renames snake_case Rust params to camelCase for the JS side.
 export const assignShortcut = (id: string, index: number | null) => invoke<void>("assign_shortcut", { id, index });
 
+// orderedIds must list exactly the unassigned (no-shortcut) contexts, top to bottom.
+export const reorderContexts = (orderedIds: string[]) => invoke<void>("reorder_contexts", { orderedIds });
+
 export const addWindowToContext = (contextId: string, platformId: number, copy = false) =>
     invoke<void>("add_window_to_context", { contextId, platformId, copy });
 

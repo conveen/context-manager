@@ -24,6 +24,10 @@ How to cut a release:
 
 ## [Unreleased]
 
+### Added
+
+- Drag-and-drop reorder Contexts in the sidebar. Contexts with assigned shortcuts are pinned to the top, automatically ordered first, and cannot be re-ordered without changing shortcuts. Remaining (unassigned) Contexts can be freely re-ordered. ([#48](https://github.com/conveen/context-manager/pull/48))
+
 ### Fixed
 
 - Hiding a Context no longer occasionally drops one of its windows from tracking when the background window poll runs at the same moment. ([#38](https://github.com/conveen/context-manager/pull/38))

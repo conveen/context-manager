@@ -35,8 +35,13 @@ pub fn load(app: &tauri::AppHandle) -> AppData {
     let path = data_path(app);
     if path.exists() {
         match std::fs::read_to_string(&path) {
-            Ok(content) => match serde_json::from_str(&content) {
-                Ok(data) => return data,
+            Ok(content) => match serde_json::from_str::<AppData>(&content) {
+                Ok(mut data) => {
+                    // Densify/repair Context `order` values (and migrate state
+                    // saved before the field existed) before handing them out.
+                    data.normalize_order();
+                    return data;
+                },
                 Err(e) => eprintln!("Failed to parse data file: {e}"),
             },
             Err(e) => eprintln!("Failed to read data file: {e}"),
