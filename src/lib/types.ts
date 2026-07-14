@@ -11,6 +11,9 @@ export interface Context {
     is_main: boolean;
     windows: WindowRef[];
     shortcut_index: number | null;
+    // Manual sidebar sort key for contexts without a shortcut (ascending).
+    // Ignored for shortcut-assigned contexts, which sort by shortcut_index.
+    order: number;
     visible: boolean;
 }
 

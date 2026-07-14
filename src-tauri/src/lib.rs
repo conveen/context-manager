@@ -163,6 +163,7 @@ pub fn run() {
             commands::rename_context,
             commands::delete_context,
             commands::assign_shortcut,
+            commands::reorder_contexts,
             commands::add_window_to_context,
             commands::remove_window_from_context,
             commands::show_context,

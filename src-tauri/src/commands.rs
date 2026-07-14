@@ -231,12 +231,15 @@ pub fn create_context(app: tauri::AppHandle) -> Context {
     let state = app.state::<AppState>();
     let mut data = state.data.lock().unwrap();
     let n = data.contexts.len();
+    // New Contexts have no shortcut, so they join the unassigned tier at its end.
+    let order = data.next_order();
     let ctx = Context {
         id: uuid::Uuid::new_v4().to_string(),
         name: format!("context-{n}"),
         is_main: false,
         windows: vec![],
         shortcut_index: None,
+        order,
         visible: true,
     };
     data.contexts.push(ctx.clone());
@@ -329,14 +332,71 @@ pub fn assign_shortcut(app: tauri::AppHandle, id: String, index: Option<u8>) -> 
         if idx == 0 && !data.contexts[ci].is_main {
             return Err("shortcut index 0 is reserved for the Main Context".to_string());
         }
-        // Release this index from any other Context currently holding it.
+        // Release this index from any other Context currently holding it. A
+        // Context that loses its shortcut this way falls into the unassigned
+        // tier, so send it to the end of that tier.
         for i in 0..data.contexts.len() {
             if i != ci && data.contexts[i].shortcut_index == Some(idx) {
                 data.contexts[i].shortcut_index = None;
+                data.contexts[i].order = data.next_order();
             }
         }
+    } else if data.contexts[ci].shortcut_index.is_some() {
+        // Clearing this Context's shortcut demotes it into the unassigned tier;
+        // place it at the end so it doesn't jump to an arbitrary spot.
+        data.contexts[ci].order = data.next_order();
     }
     data.contexts[ci].shortcut_index = index;
+    let _ = state.save_tx.send(data.clone());
+    Ok(())
+}
+
+/// Sets the manual sidebar order of the unassigned tier (Contexts with no
+/// `shortcut_index`) to the given sequence of Context ids.
+///
+/// `ordered_ids` must list exactly the Contexts that currently have no
+/// shortcut, in the desired top-to-bottom order; each is assigned an ascending
+/// `order` starting at 0. Shortcut-assigned Contexts (including Main) are
+/// auto-ordered by `shortcut_index` and are never affected — passing one of
+/// them, or omitting an unassigned Context, is rejected so the frontend and
+/// backend can't silently drift out of sync.
+///
+/// # Errors
+/// - Returns `Err` if any id is unknown, refers to a shortcut-assigned Context,
+///   appears more than once, or if `ordered_ids` does not cover exactly the set
+///   of currently-unassigned Contexts.
+#[tauri::command]
+pub fn reorder_contexts(app: tauri::AppHandle, ordered_ids: Vec<String>) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut data = state.data.lock().unwrap();
+
+    // The set this call is allowed to (and must fully) reorder.
+    let unassigned: std::collections::HashSet<&str> =
+        data.contexts.iter().filter(|c| c.shortcut_index.is_none()).map(|c| c.id.as_str()).collect();
+
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for id in &ordered_ids {
+        if !unassigned.contains(id.as_str()) {
+            return Err(format!("context '{id}' is not an unassigned (reorderable) context"));
+        }
+        if !seen.insert(id.as_str()) {
+            return Err(format!("context '{id}' appears more than once in the new order"));
+        }
+    }
+    if seen.len() != unassigned.len() {
+        return Err("new order must cover exactly the unassigned contexts".to_string());
+    }
+
+    // Apply: position in `ordered_ids` becomes the new `order`. Shortcut-assigned
+    // Contexts keep their (ignored) order; normalize_order re-densifies globally.
+    let rank: std::collections::HashMap<&str, u32> =
+        ordered_ids.iter().enumerate().map(|(i, id)| (id.as_str(), i as u32)).collect();
+    for ctx in &mut data.contexts {
+        if let Some(&r) = rank.get(ctx.id.as_str()) {
+            ctx.order = r;
+        }
+    }
+    data.normalize_order();
     let _ = state.save_tx.send(data.clone());
     Ok(())
 }

@@ -1,4 +1,6 @@
 <script lang="ts">
+import { dndzone } from "svelte-dnd-action";
+import type { DndEvent } from "svelte-dnd-action";
 import type { Context } from "../lib/types";
 import * as api from "../lib/api";
 import { hueFor } from "../lib/color";
@@ -12,6 +14,44 @@ interface Props {
 }
 
 const { contexts, selectedId, onSelect, onCreate, onRefresh }: Props = $props();
+
+// ── Two-tier ordering ─────────────────────────────────────────────────────
+// Contexts with a shortcut are auto-ordered (by the parent) and pinned — not
+// draggable. Contexts without a shortcut form the drag-reorderable tier. The
+// `contexts` prop already arrives in display order (pinned first), so a simple
+// partition preserves each tier's order.
+type CtxItem = Context & { isDndShadowItem?: boolean };
+
+const pinnedContexts = $derived(contexts.filter((c) => c.shortcut_index !== null));
+
+// Local copy of the free tier that the DnD library mutates during a drag.
+let freeItems = $state<CtxItem[]>([]);
+// While a drag or the reorder round-trip is in flight, don't let the prop-sync
+// effect clobber the optimistic local order (mirrors DetailPanel's pattern).
+let skipSync = $state(false);
+
+$effect(() => {
+    const free = contexts.filter((c) => c.shortcut_index === null);
+    if (skipSync) return;
+    freeItems = free;
+});
+
+function onFreeConsider(e: CustomEvent<DndEvent<CtxItem>>) {
+    skipSync = true;
+    freeItems = e.detail.items;
+}
+
+async function onFreeFinalize(e: CustomEvent<DndEvent<CtxItem>>) {
+    freeItems = e.detail.items;
+    try {
+        await api.reorderContexts(freeItems.map((c) => c.id));
+        await onRefresh();
+    } catch (err) {
+        console.error(err);
+    } finally {
+        skipSync = false;
+    }
+}
 
 // ── Context menu ──────────────────────────────────────────────────────────
 let menu: { x: number; y: number; ctx: Context } | null = $state(null);
@@ -94,47 +134,66 @@ async function handleDelete(id: string) {
     </div>
 {/if}
 
-<aside class="sidebar">
-    {#each contexts as ctx (ctx.id)}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-            class="ctx-item"
-            class:selected={selectedId === ctx.id}
-            role="button"
-            tabindex="0"
-            onclick={() => onSelect(ctx.id)}
-            onkeydown={(e) => e.key === 'Enter' && onSelect(ctx.id)}
-            oncontextmenu={(e) => openMenu(e, ctx)}
-            title={ctx.name}
-        >
-            <div class="thumb" style="background:hsl({hueFor(ctx.id)},50%,36%)">
-                {#if ctx.shortcut_index !== null}
-                    <span class="sc-badge">{ctx.shortcut_index}</span>
-                {/if}
-            </div>
-
-            {#if renamingId === ctx.id}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                    class="rename-input"
-                    bind:value={renameValue}
-                    autofocus
-                    onclick={(e) => e.stopPropagation()}
-                    onblur={() => submitRename(ctx.id)}
-                    onkeydown={(e) => {
-                        if (e.key === 'Enter') submitRename(ctx.id);
-                        else if (e.key === 'Escape') renamingId = null;
-                    }}
-                />
-            {:else}
-                <span class="ctx-name" ondblclick={!ctx.is_main ? () => startRename(ctx) : undefined}>
-                    {ctx.name}
-                </span>
+{#snippet ctxItem(ctx: CtxItem)}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+        class="ctx-item"
+        class:selected={selectedId === ctx.id}
+        class:shadow={ctx.isDndShadowItem}
+        role="button"
+        tabindex="0"
+        onclick={() => onSelect(ctx.id)}
+        onkeydown={(e) => e.key === 'Enter' && onSelect(ctx.id)}
+        oncontextmenu={(e) => openMenu(e, ctx)}
+        title={ctx.name}
+    >
+        <div class="thumb" style="background:hsl({hueFor(ctx.id)},50%,36%)">
+            {#if ctx.shortcut_index !== null}
+                <span class="sc-badge">{ctx.shortcut_index}</span>
             {/if}
-
-            <div class="vis-dot" class:vis-on={ctx.visible}></div>
         </div>
+
+        {#if renamingId === ctx.id}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+                class="rename-input"
+                bind:value={renameValue}
+                autofocus
+                onclick={(e) => e.stopPropagation()}
+                onblur={() => submitRename(ctx.id)}
+                onkeydown={(e) => {
+                    if (e.key === 'Enter') submitRename(ctx.id);
+                    else if (e.key === 'Escape') renamingId = null;
+                }}
+            />
+        {:else}
+            <span class="ctx-name" ondblclick={!ctx.is_main ? () => startRename(ctx) : undefined}>
+                {ctx.name}
+            </span>
+        {/if}
+
+        <div class="vis-dot" class:vis-on={ctx.visible}></div>
+    </div>
+{/snippet}
+
+<aside class="sidebar">
+    <!-- Pinned tier: shortcut-assigned contexts, auto-ordered, not draggable. -->
+    {#each pinnedContexts as ctx (ctx.id)}
+        {@render ctxItem(ctx)}
     {/each}
+
+    <!-- Free tier: drag-reorderable contexts without a shortcut. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+        class="free-zone"
+        use:dndzone={{ items: freeItems, flipDurationMs: 150, type: 'context', dropTargetStyle: {} }}
+        onconsider={onFreeConsider}
+        onfinalize={onFreeFinalize}
+    >
+        {#each freeItems as ctx (ctx.id)}
+            {@render ctxItem(ctx)}
+        {/each}
+    </div>
 
     <button class="add-btn" onclick={onCreate} title="New context">+</button>
 </aside>
@@ -153,6 +212,18 @@ async function handleDelete(id: string) {
         gap: 4px;
     }
 
+    /* Free (drag-reorderable) tier. Matches the sidebar's own column layout so
+       pinned and free items stack identically; does not grow, so the add
+       button's margin-top:auto still pins it to the bottom. */
+    .free-zone {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        width: 100%;
+        outline: none;
+    }
+
     .ctx-item {
         position: relative;
         width: 68px;
@@ -167,6 +238,7 @@ async function handleDelete(id: string) {
     }
     .ctx-item:hover { background: #1d1d1d; }
     .ctx-item.selected { background: #252525; }
+    .ctx-item.shadow { opacity: 0.35; }
 
     .thumb {
         width: 56px;

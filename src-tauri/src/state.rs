@@ -60,6 +60,15 @@ pub struct Context {
     /// Index used to derive the `<meta>+n` keyboard shortcut. `None` means no
     /// shortcut is assigned. Main is always `Some(0)`; other Contexts may use 1–9.
     pub shortcut_index: Option<u8>,
+    /// Manual sort key for the sidebar's *unassigned* tier (Contexts with no
+    /// `shortcut_index`), ascending. Ignored for Contexts that have a shortcut,
+    /// which the sidebar auto-orders by `shortcut_index` instead. Kept globally
+    /// unique and dense by [`AppData::normalize_order`]. Defaults to `0` for
+    /// entries loaded from state persisted before this field existed; the
+    /// normalization pass on load rewrites those by their array position so the
+    /// pre-existing display order is preserved.
+    #[serde(default)]
+    pub order: u32,
     /// Whether this Context (and its exclusive windows) is currently shown on screen.
     pub visible: bool,
 }
@@ -120,6 +129,34 @@ pub struct AppData {
     pub settings: Settings,
 }
 
+impl AppData {
+    /// Rewrites every Context's `order` to a dense, globally-unique `0..n`
+    /// ranking derived from a stable sort on the current `order` values.
+    ///
+    /// This does **not** move elements within `contexts`; it only reassigns the
+    /// `order` field. Because the sort is stable, ties keep their existing array
+    /// order — so state persisted before `order` existed (every value defaulting
+    /// to `0`) is renumbered by array position, exactly preserving the previous
+    /// sidebar order. Once orders are already distinct the operation is a no-op
+    /// beyond re-densifying any gaps, making it idempotent and safe to run on
+    /// every load.
+    pub fn normalize_order(&mut self) {
+        let mut idx: Vec<usize> = (0..self.contexts.len()).collect();
+        idx.sort_by_key(|&i| self.contexts[i].order);
+        for (rank, i) in idx.into_iter().enumerate() {
+            self.contexts[i].order = rank as u32;
+        }
+    }
+
+    /// Returns the smallest `order` value strictly greater than every Context's,
+    /// i.e. the value to give a Context that should sort to the end of the
+    /// unassigned tier. Assumes [`normalize_order`](Self::normalize_order) keeps
+    /// orders dense, so this equals `contexts.len()`.
+    pub fn next_order(&self) -> u32 {
+        self.contexts.iter().map(|c| c.order).max().map_or(0, |m| m + 1)
+    }
+}
+
 impl Default for AppData {
     fn default() -> Self {
         Self {
@@ -129,6 +166,7 @@ impl Default for AppData {
                 is_main: true,
                 windows: vec![],
                 shortcut_index: Some(0),
+                order: 0,
                 visible: true,
             }],
             settings: Settings {
