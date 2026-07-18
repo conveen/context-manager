@@ -38,6 +38,7 @@ How to cut a release:
 
 - Hiding a Context no longer occasionally drops one of its windows from tracking when the background window poll runs at the same moment. ([#38](https://github.com/conveen/context-manager/pull/38))
 - The background window poll no longer rewrites its saved state file every ~2 seconds when nothing has changed; state is only written when the window set, titles, or app names actually change. ([#61](https://github.com/conveen/context-manager/pull/61))
+- Changing the Keyboard Shortcut Modifier in Settings now takes effect immediately; previously the old shortcuts stayed active and the new ones didn't work until the app was restarted. ([#62](https://github.com/conveen/context-manager/pull/62))
 - Moving a window into a hidden Context, or removing it from its last visible one, no longer occasionally drops the window from tracking when the background window poll runs at the same moment. ([#63](https://github.com/conveen/context-manager/pull/63))
 - New Contexts are assigned default names using the format `context-n` with the first available `n`, avoiding potential duplicate names. ([#64](https://github.com/conveen/context-manager/pull/64))
 - Assigning a keyboard shortcut number outside 1–9 is now rejected with an error instead of being silently stored as a shortcut that never fires. ([#65](https://github.com/conveen/context-manager/pull/65))
