@@ -321,8 +321,10 @@ pub fn delete_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
 /// - Pass `index: null` / `None` to remove the shortcut assignment.
 ///
 /// # Errors
-/// Returns `Err` if the Context does not exist or if index 0 is requested for
-/// a non-Main Context.
+/// - Returns `Err` if the Context does not exist.
+/// - Returns `Err` if index 0 is requested for a non-Main Context.
+/// - Returns `Err` if the index is greater than 9 — only `<meta>+0`–`9`
+///   shortcuts exist, so a larger index would be stored but never fire.
 #[tauri::command]
 pub fn assign_shortcut(app: tauri::AppHandle, id: String, index: Option<u8>) -> Result<(), String> {
     let state = app.state::<AppState>();
@@ -331,6 +333,9 @@ pub fn assign_shortcut(app: tauri::AppHandle, id: String, index: Option<u8>) -> 
     if let Some(idx) = index {
         if idx == 0 && !data.contexts[ci].is_main {
             return Err("shortcut index 0 is reserved for the Main Context".to_string());
+        }
+        if idx > 9 {
+            return Err(format!("shortcut index {idx} is out of range; only 1-9 are available"));
         }
         // Release this index from any other Context currently holding it. A
         // Context that loses its shortcut this way falls into the unassigned
