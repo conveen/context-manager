@@ -5,7 +5,9 @@ import * as api from "./lib/api";
 import type { AppData } from "./lib/types";
 import Sidebar from "./components/Sidebar.svelte";
 import DetailPanel from "./components/DetailPanel.svelte";
+import ErrorToast from "./components/ErrorToast.svelte";
 import Settings from "./Settings.svelte";
+import { showError } from "./lib/toast.svelte";
 
 let appData = $state<AppData | null>(null);
 let selectedId = $state<string | null>(null);
@@ -110,7 +112,7 @@ async function handleCreate() {
         await refresh();
         selectedId = ctx.id;
     } catch (e) {
-        if (import.meta.env.DEV) console.error(e);
+        showError(String(e));
     }
 }
 
@@ -128,6 +130,7 @@ function closeSettings() {
 </script>
 
 <div class="app" role="main">
+    <ErrorToast />
     {#if showSettings}
         <div class="settings-view">
             <button class="back-btn" onclick={closeSettings} title="Back">← Back</button>
