@@ -1,7 +1,7 @@
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::Code;
 
-use crate::state::{AppData, AppState, Context};
+use crate::state::{AppData, AppState, Context, WindowRef};
 use crate::wm;
 
 // ---------------------------------------------------------------------------
@@ -11,6 +11,21 @@ use crate::wm;
 /// Returns the index of the context with the given `id` in `data.contexts`.
 fn ctx_idx(data: &AppData, id: &str) -> Result<usize, String> {
     data.contexts.iter().position(|c| c.id == id).ok_or_else(|| format!("context '{id}' not found"))
+}
+
+/// Applies `f` to every stored copy of the window identified by `platform_id`
+/// across all Contexts. A window can belong to several Contexts at once, each
+/// holding its own `WindowRef` copy, and per-window state like
+/// `original_position` (and `hidden_z` on macOS) must stay in sync across all
+/// of them.
+fn for_each_window_copy(data: &mut AppData, platform_id: u64, mut f: impl FnMut(&mut WindowRef)) {
+    for ctx in &mut data.contexts {
+        for w in &mut ctx.windows {
+            if w.platform_id == platform_id {
+                f(w);
+            }
+        }
+    }
 }
 
 /// Physically hides windows that would have no remaining visible Context after
@@ -50,7 +65,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
 
     // Phase 1 — collect under lock, then optimistically mark the targets
     // hidden before releasing the lock (see function doc comment).
-    let hide_targets: Vec<(u64, crate::state::WindowRef)> = {
+    let hide_targets: Vec<(u64, WindowRef)> = {
         let mut data = state.data.lock().unwrap();
         let ci = match ctx_idx(&data, ctx_id) {
             Ok(i) => i,
@@ -59,7 +74,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
                 return;
             },
         };
-        let targets: Vec<(u64, crate::state::WindowRef)> = data.contexts[ci]
+        let targets: Vec<(u64, WindowRef)> = data.contexts[ci]
             .windows
             .iter()
             .filter(|w| {
@@ -71,12 +86,8 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
             .map(|w| (w.platform_id, w.clone()))
             .collect();
 
-        for ctx in &mut data.contexts {
-            for w in &mut ctx.windows {
-                if targets.iter().any(|(id, _)| *id == w.platform_id) {
-                    w.original_position = Some([0.0, 0.0]);
-                }
-            }
+        for (platform_id, _) in &targets {
+            for_each_window_copy(&mut data, *platform_id, |w| w.original_position = Some([0.0, 0.0]));
         }
 
         targets
@@ -105,28 +116,18 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
         },
     }
     for (platform_id, orig_pos) in &hidden {
-        for ctx in &mut data.contexts {
-            for w in &mut ctx.windows {
-                if w.platform_id == *platform_id {
-                    w.original_position = *orig_pos;
-                    #[cfg(target_os = "macos")]
-                    {
-                        w.hidden_z = z_map.get(platform_id).copied();
-                    }
-                }
+        for_each_window_copy(&mut data, *platform_id, |w| {
+            w.original_position = *orig_pos;
+            #[cfg(target_os = "macos")]
+            {
+                w.hidden_z = z_map.get(platform_id).copied();
             }
-        }
+        });
     }
     // Hide failed: revert the optimistic sentinel so the window isn't left
     // permanently (and incorrectly) marked hidden.
     for platform_id in &failed {
-        for ctx in &mut data.contexts {
-            for w in &mut ctx.windows {
-                if w.platform_id == *platform_id {
-                    w.original_position = None;
-                }
-            }
-        }
+        for_each_window_copy(&mut data, *platform_id, |w| w.original_position = None);
     }
     let _ = state.save_tx.send(data.clone());
 }
@@ -143,7 +144,7 @@ fn do_show_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
     // Phase 1
     // `mut` is used only on macOS, to reorder for z-order restoration.
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut show_targets: Vec<(u64, crate::state::WindowRef)> = {
+    let mut show_targets: Vec<(u64, WindowRef)> = {
         let data = state.data.lock().unwrap();
         let ci = match ctx_idx(&data, ctx_id) {
             Ok(i) => i,
@@ -169,7 +170,7 @@ fn do_show_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
     // Remember the frontmost (lowest rank) window to explicitly raise once all
     // windows are un-minimized, reinstating it as the top window.
     #[cfg(target_os = "macos")]
-    let frontmost: Option<crate::state::WindowRef> =
+    let frontmost: Option<WindowRef> =
         show_targets.iter().min_by_key(|(_, w)| w.hidden_z.unwrap_or(u32::MAX)).map(|(_, w)| w.clone());
 
     // Phase 2
@@ -199,17 +200,13 @@ fn do_show_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
         },
     }
     for platform_id in &shown {
-        for ctx in &mut data.contexts {
-            for w in &mut ctx.windows {
-                if w.platform_id == *platform_id {
-                    w.original_position = None;
-                    #[cfg(target_os = "macos")]
-                    {
-                        w.hidden_z = None;
-                    }
-                }
+        for_each_window_copy(&mut data, *platform_id, |w| {
+            w.original_position = None;
+            #[cfg(target_os = "macos")]
+            {
+                w.hidden_z = None;
             }
-        }
+        });
     }
     let _ = state.save_tx.send(data.clone());
 }
@@ -434,6 +431,14 @@ pub fn reorder_contexts(app: tauri::AppHandle, ordered_ids: Vec<String>) -> Resu
 /// default (removed from Main). Pass `copy = true` to keep it in Main as well,
 /// so it stays available to add to further Contexts.
 ///
+/// When the reconciliation will hide the window, every stored copy's
+/// `original_position` is optimistically set to a sentinel before the lock is
+/// released — same rationale as `do_hide_context_windows`: the background
+/// poll's hidden-window exemption (`original_position.is_some()`) must cover
+/// the window while the OS hide call is in flight, or a poll firing in that
+/// gap would drop it from tracking. The write-back below replaces the sentinel
+/// with the real captured position, or reverts it to `None` if the hide failed.
+///
 /// # Errors
 /// Returns `Err` if the Context or the window (by `platform_id`) is not found.
 #[tauri::command]
@@ -450,7 +455,7 @@ pub fn add_window_to_context(
     // the post-operation membership (in the target Context; out of Main if this
     // is a move) against the "visible iff any Context is visible" rule.
     let (mut win_clone, should_show, should_hide) = {
-        let data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap();
         let ci = ctx_idx(&data, &context_id)?;
         if data.contexts[ci].windows.iter().any(|w| w.platform_id == platform_id) {
             return Ok(()); // already a member
@@ -473,7 +478,14 @@ pub fn add_window_to_context(
                     && c.windows.iter().any(|w| w.platform_id == platform_id)
             });
         let was_hidden = win.original_position.is_some();
-        (win, was_hidden && will_be_visible, !was_hidden && !will_be_visible)
+        let should_hide = !was_hidden && !will_be_visible;
+
+        // Optimistically mark the window hidden before releasing the lock (see
+        // the function doc comment); the write-back below finalizes or reverts.
+        if should_hide {
+            for_each_window_copy(&mut data, platform_id, |w| w.original_position = Some([0.0, 0.0]));
+        }
+        (win, was_hidden && will_be_visible, should_hide)
     };
 
     // Reconcile the window's physical visibility outside the lock.
@@ -499,23 +511,22 @@ pub fn add_window_to_context(
     }
 
     // Re-acquire to persist the membership and propagate any position change.
+    // On the hide path this overwrites the optimistic sentinel with the real
+    // captured position, or — because a failed hide leaves the clone's
+    // `original_position` untouched (`None`) — reverts it.
     let mut data = state.data.lock().unwrap();
     let ci = ctx_idx(&data, &context_id)?;
     // Propagate position state to all existing copies.
     let new_pos = win_clone.original_position;
     #[cfg(target_os = "macos")]
     let new_z = win_clone.hidden_z;
-    for ctx in &mut data.contexts {
-        for w in &mut ctx.windows {
-            if w.platform_id == platform_id {
-                w.original_position = new_pos;
-                #[cfg(target_os = "macos")]
-                {
-                    w.hidden_z = new_z;
-                }
-            }
+    for_each_window_copy(&mut data, platform_id, |w| {
+        w.original_position = new_pos;
+        #[cfg(target_os = "macos")]
+        {
+            w.hidden_z = new_z;
         }
-    }
+    });
     data.contexts[ci].windows.push(win_clone);
 
     // Remove window from Main context if moving (not copying) to a non-Main
@@ -546,6 +557,14 @@ pub fn add_window_to_context(
 /// - If it is now in a visible Context but currently hidden, it is shown.
 /// - If it is now only in hidden Contexts, it is hidden.
 ///
+/// When the reconciliation will hide the window, every stored copy's
+/// `original_position` is optimistically set to a sentinel before the lock is
+/// released — same rationale as `do_hide_context_windows`: the background
+/// poll's hidden-window exemption (`original_position.is_some()`) must cover
+/// the window while the OS hide call is in flight, or a poll firing in that
+/// gap would drop it from tracking. The write-back below replaces the sentinel
+/// with the real captured position, or reverts it to `None` if the hide failed.
+///
 /// Idempotent: returns `Ok` if the window is not a member.
 ///
 /// # Errors
@@ -556,7 +575,7 @@ pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, pla
 
     // Collect info before OS call: window's current state and its contexts after removal.
     let (mut win_clone, should_show, should_hide, readd_to_main) = {
-        let data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap();
         let ci = ctx_idx(&data, &context_id)?;
 
         // Find the window across all contexts.
@@ -602,6 +621,12 @@ pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, pla
         let should_show = was_hidden && will_be_visible;
         let should_hide = !was_hidden && !will_be_visible && !belongs_nowhere;
 
+        // Optimistically mark the window hidden before releasing the lock (see
+        // the function doc comment); the write-back below finalizes or reverts.
+        if should_hide {
+            for_each_window_copy(&mut data, platform_id, |w| w.original_position = Some([0.0, 0.0]));
+        }
+
         (win, should_show, should_hide, readd_to_main)
     };
 
@@ -632,21 +657,20 @@ pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, pla
     let ci = ctx_idx(&data, &context_id)?;
     data.contexts[ci].windows.retain(|w| w.platform_id != platform_id);
 
-    // Propagate position state to all remaining copies.
+    // Propagate position state to all remaining copies. On the hide path this
+    // overwrites the optimistic sentinel with the real captured position, or —
+    // because a failed hide leaves the clone's `original_position` untouched
+    // (`None`) — reverts it.
     let new_pos = win_clone.original_position;
     #[cfg(target_os = "macos")]
     let new_z = win_clone.hidden_z;
-    for ctx in &mut data.contexts {
-        for w in &mut ctx.windows {
-            if w.platform_id == platform_id {
-                w.original_position = new_pos;
-                #[cfg(target_os = "macos")]
-                {
-                    w.hidden_z = new_z;
-                }
-            }
+    for_each_window_copy(&mut data, platform_id, |w| {
+        w.original_position = new_pos;
+        #[cfg(target_os = "macos")]
+        {
+            w.hidden_z = new_z;
         }
-    }
+    });
 
     // Return the window to Main if the removal left it in no Context.
     if readd_to_main {
