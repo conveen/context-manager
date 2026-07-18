@@ -225,17 +225,25 @@ pub fn get_app_data(app: tauri::AppHandle) -> AppData {
 }
 
 /// Creates a new (non-Main) Context with an auto-generated name, no shortcut,
-/// and `visible = true`. Returns the newly created `Context`.
+/// and `visible = true`. The name is the first `context-<n>` (n ≥ 1) not
+/// already in use, honoring the same uniqueness rule `rename_context`
+/// enforces. Returns the newly created `Context`.
 #[tauri::command]
 pub fn create_context(app: tauri::AppHandle) -> Context {
     let state = app.state::<AppState>();
     let mut data = state.data.lock().unwrap();
-    let n = data.contexts.len();
+    // First unused default name. Deriving <n> from the Context count alone can
+    // collide after a deletion (create context-1 and context-2, delete
+    // context-1, create again → a second "context-2").
+    let name = (1..)
+        .map(|n| format!("context-{n}"))
+        .find(|candidate| !data.contexts.iter().any(|c| &c.name == candidate))
+        .expect("some context-<n> name is always unused");
     // New Contexts have no shortcut, so they join the unassigned tier at its end.
     let order = data.next_order();
     let ctx = Context {
         id: uuid::Uuid::new_v4().to_string(),
-        name: format!("context-{n}"),
+        name,
         is_main: false,
         windows: vec![],
         shortcut_index: None,
