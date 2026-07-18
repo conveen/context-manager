@@ -81,7 +81,7 @@ pub struct Context {
 ///
 /// # Invariants
 /// - The chosen combination must not conflict with common system shortcuts.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum MetaKey {
     /// `Ctrl+Alt` — default; works on Windows and Linux; available on macOS.
     CtrlAlt,

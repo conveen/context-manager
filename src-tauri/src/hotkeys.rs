@@ -49,3 +49,20 @@ pub fn register_all(app: &AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+/// Replaces every registered global shortcut with a fresh registration derived
+/// from the meta key in the current settings.
+///
+/// Called when the meta key setting changes so the new modifier takes effect
+/// immediately; calling `register_all` alone would layer the new accelerators
+/// on top of the old ones, leaving both modifiers active.
+///
+/// # Errors
+/// Returns `Err` if unregistering or any registration fails (e.g. the new
+/// combination is already claimed by another application). On failure the
+/// shortcut set may be left partially registered; the caller should restore a
+/// known-good meta key in settings and call this again.
+pub fn reregister_all(app: &AppHandle) -> Result<(), String> {
+    app.global_shortcut().unregister_all().map_err(|e| format!("unregister_all: {e}"))?;
+    register_all(app)
+}
