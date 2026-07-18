@@ -221,10 +221,12 @@ pub fn get_app_data(app: tauri::AppHandle) -> AppData {
     app.state::<AppState>().data.lock().unwrap().clone()
 }
 
-/// Creates a new (non-Main) Context with an auto-generated name, no shortcut,
-/// and `visible = true`. The name is the first `context-<n>` (n ≥ 1) not
-/// already in use, honoring the same uniqueness rule `rename_context`
-/// enforces. Returns the newly created `Context`.
+/// Creates a new (non-Main) Context with an auto-generated name and no
+/// shortcut. The name is the first `context-<n>` (n ≥ 1) not already in use,
+/// honoring the same uniqueness rule `rename_context` enforces. The Context
+/// starts visible, except under Single Context Mode where it starts hidden so
+/// the active Context remains the sole visible one. Returns the newly created
+/// `Context`.
 #[tauri::command]
 pub fn create_context(app: tauri::AppHandle) -> Context {
     let state = app.state::<AppState>();
@@ -245,7 +247,10 @@ pub fn create_context(app: tauri::AppHandle) -> Context {
         windows: vec![],
         shortcut_index: None,
         order,
-        visible: true,
+        // Under Single Context Mode exactly one Context may be visible at a
+        // time, so a newly created Context must start hidden — the currently
+        // active Context stays the sole visible one until the user switches.
+        visible: !data.settings.single_context_mode,
     };
     data.contexts.push(ctx.clone());
     let _ = state.save_tx.send(data.clone());
