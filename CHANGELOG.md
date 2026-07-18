@@ -36,6 +36,7 @@ How to cut a release:
 - New Contexts are assigned default names using the format `context-n` with the first available `n`, avoiding potential duplicate names. ([#64](https://github.com/conveen/context-manager/pull/64))
 - Assigning a keyboard shortcut number outside 1–9 is now rejected with an error instead of being silently stored as a shortcut that never fires. ([#65](https://github.com/conveen/context-manager/pull/65))
 - On Windows, hiding a Context no longer permanently drops its windows. Hidden windows are now correctly remembered as hidden, survive the background poll, and can be shown again. ([#67](https://github.com/conveen/context-manager/pull/67))
+- Contexts created while Single Context Mode is enabled now start hidden, so the active Context remains the only visible one instead of two Contexts becoming visible at once. ([#68](https://github.com/conveen/context-manager/pull/68))
 
 ## [v0.1.0] - 2026-07-08
 
