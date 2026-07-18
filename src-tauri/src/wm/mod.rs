@@ -93,7 +93,12 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 ///    Context is added to the Main Context as a new `WindowRef`.
 ///
 /// After reconciliation, the updated `AppData` is sent to the persistence
-/// worker via the save channel.
+/// worker via the save channel — but only if one of the three mutations
+/// actually changed something. A quiet tick (stable window set, unchanged
+/// titles) must not signal the channel: `watch::Sender::send` marks the
+/// channel changed unconditionally, so an unconditional send would wake the
+/// debounced saver and rewrite `data.json` every ~2s for the lifetime of the
+/// application.
 ///
 /// # Arguments
 /// - `app`: Handle to the running Tauri application; used to access `AppState`.
@@ -122,6 +127,9 @@ pub fn update_windows(app: &tauri::AppHandle) {
     // IDs tracked across all contexts before this update
     let known_ids: HashSet<u64> = data.contexts.iter().flat_map(|c| c.windows.iter().map(|w| w.platform_id)).collect();
 
+    // Whether this tick mutated anything; gates the save-channel send below.
+    let mut changed = false;
+
     // Refresh the title/app-name of tracked windows that are still live. A
     // window's title can change after it is added to a Context; the macOS
     // hide/show path resolves the OS window by its current `AXTitle`, so a stale
@@ -131,8 +139,14 @@ pub fn update_windows(app: &tauri::AppHandle) {
     for ctx in &mut data.contexts {
         for w in &mut ctx.windows {
             if let Some(info) = current_by_id.get(&w.platform_id) {
-                w.window_title = info.window_title.clone();
-                w.app_name = info.app_name.clone();
+                if w.window_title != info.window_title {
+                    w.window_title = info.window_title.clone();
+                    changed = true;
+                }
+                if w.app_name != info.app_name {
+                    w.app_name = info.app_name.clone();
+                    changed = true;
+                }
             }
         }
     }
@@ -142,7 +156,9 @@ pub fn update_windows(app: &tauri::AppHandle) {
     // window is minimized and therefore absent from the on-screen enumeration,
     // but it still exists and must stay tracked so it can be shown again.
     for ctx in &mut data.contexts {
+        let before = ctx.windows.len();
         ctx.windows.retain(|w| current_ids.contains(&w.platform_id) || w.original_position.is_some());
+        changed |= ctx.windows.len() != before;
     }
 
     // Add windows not yet tracked in any context to Main
@@ -158,9 +174,12 @@ pub fn update_windows(app: &tauri::AppHandle) {
             #[cfg(target_os = "macos")]
             hidden_z: None,
         });
+        changed = true;
     }
 
-    let _ = state.save_tx.send(data.clone());
+    if changed {
+        let _ = state.save_tx.send(data.clone());
+    }
 }
 
 /// Hides the given window by minimizing it (macOS) or calling
