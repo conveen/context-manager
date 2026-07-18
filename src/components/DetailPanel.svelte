@@ -3,6 +3,7 @@ import { dndzone, TRIGGERS } from "svelte-dnd-action";
 import type { DndEvent } from "svelte-dnd-action";
 import type { Context, WindowRef } from "../lib/types";
 import * as api from "../lib/api";
+import { showError } from "../lib/toast.svelte";
 
 interface Props {
     context: Context | null;
@@ -98,10 +99,12 @@ function onAvailFinalize(e: CustomEvent<DndEvent<DndItem>>) {
 async function doWindowOp(op: () => Promise<void>) {
     try {
         await op();
-        await onRefresh();
     } catch (e) {
-        console.error(e);
+        showError(String(e));
     } finally {
+        // Refresh on failure too, so a rejected drop snaps the optimistic
+        // zone contents back to the backend's instead of lingering until the poll.
+        await onRefresh();
         skipSync = false;
     }
 }
@@ -117,7 +120,7 @@ async function toggleVisibility() {
         }
         await onRefresh();
     } catch (e) {
-        console.error(e);
+        showError(String(e));
     }
 }
 

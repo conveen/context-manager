@@ -4,6 +4,7 @@ import type { DndEvent } from "svelte-dnd-action";
 import type { Context } from "../lib/types";
 import * as api from "../lib/api";
 import { hueFor } from "../lib/color";
+import { showError } from "../lib/toast.svelte";
 
 interface Props {
     contexts: Context[];
@@ -45,10 +46,12 @@ async function onFreeFinalize(e: CustomEvent<DndEvent<CtxItem>>) {
     freeItems = e.detail.items;
     try {
         await api.reorderContexts(freeItems.map((c) => c.id));
-        await onRefresh();
     } catch (err) {
-        console.error(err);
+        showError(String(err));
     } finally {
+        // Refresh on failure too, so a rejected reorder snaps the optimistic
+        // local order back to the backend's instead of lingering until the poll.
+        await onRefresh();
         skipSync = false;
     }
 }
@@ -75,7 +78,7 @@ async function handleAssignShortcut(id: string, index: number | null) {
         await api.assignShortcut(id, index);
         await onRefresh();
     } catch (e) {
-        console.error(e);
+        showError(String(e));
     }
 }
 
@@ -93,7 +96,7 @@ async function submitRename(id: string) {
         await api.renameContext(id, trimmed);
         await onRefresh();
     } catch (e) {
-        console.error(e);
+        showError(String(e));
     }
 }
 
@@ -103,7 +106,7 @@ async function handleDelete(id: string) {
         await api.deleteContext(id);
         await onRefresh();
     } catch (e) {
-        console.error(e);
+        showError(String(e));
     }
 }
 </script>
