@@ -171,8 +171,11 @@ pub fn update_windows(app: &tauri::AppHandle) {
 /// minimized via the Accessibility API (`AXMinimized = true`); un-minimizing
 /// restores its position and size.
 ///
-/// On Windows, `SW_HIDE` preserves the window's position internally; no
-/// caching is needed.
+/// On Windows, `SW_HIDE` preserves the window's position internally, so
+/// `window.original_position` is set to a sentinel whose value is never read —
+/// its presence is the "hidden by us" marker that keeps the background poll
+/// from dropping the (no longer enumerable) window and lets the show path
+/// find it.
 ///
 /// # Arguments
 /// - `window`: Mutable reference to the tracked window. On macOS, `pid` must

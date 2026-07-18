@@ -24,8 +24,11 @@ pub struct WindowRef {
     pub app_name: String,
     /// Title of the window at the time it was added to a Context.
     pub window_title: String,
-    /// Screen coordinates `[x, y]` captured just before the window was hidden, used
-    /// to restore its position when shown again. `None` while the window is visible.
+    /// Hidden-by-us marker: `Some` while the window is hidden, `None` while it
+    /// is visible. On macOS the value is the screen coordinates `[x, y]`
+    /// captured just before hiding; on Windows it is a meaningless sentinel
+    /// (`SW_SHOW` restores geometry natively). Only the presence of the value
+    /// may be relied on cross-platform.
     pub original_position: Option<[f64; 2]>,
     /// Front-to-back stacking rank captured when the window was hidden (`0` =
     /// frontmost, larger = further back), used to restore z-order on show by
