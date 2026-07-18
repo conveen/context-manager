@@ -31,6 +31,7 @@ How to cut a release:
 ### Fixed
 
 - Hiding a Context no longer occasionally drops one of its windows from tracking when the background window poll runs at the same moment. ([#38](https://github.com/conveen/context-manager/pull/38))
+- Assigning a keyboard shortcut number outside 1–9 is now rejected with an error instead of being silently stored as a shortcut that never fires. ([#65](https://github.com/conveen/context-manager/pull/65))
 
 ## [v0.1.0] - 2026-07-08
 
