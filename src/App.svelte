@@ -7,6 +7,7 @@ import Sidebar from "./components/Sidebar.svelte";
 import DetailPanel from "./components/DetailPanel.svelte";
 import ErrorToast from "./components/ErrorToast.svelte";
 import Settings from "./Settings.svelte";
+import { CONTEXTS_CHANGED, SHOW_SETTINGS } from "./lib/events";
 import { showError } from "./lib/toast.svelte";
 
 let appData = $state<AppData | null>(null);
@@ -83,7 +84,7 @@ windowSubscription((appWindow) =>
 
 // Listen for the backend's request to show the settings panel.
 windowSubscription((appWindow) =>
-    appWindow.listen("show-settings", () => {
+    appWindow.listen(SHOW_SETTINGS, () => {
         showSettings = true;
     }),
 );
@@ -108,7 +109,7 @@ $effect(() => {
 
 // Refresh immediately when the backend changes context visibility
 // (e.g. via global shortcuts) instead of waiting for the periodic poll.
-windowSubscription((appWindow) => appWindow.listen("contexts-changed", () => refresh()));
+windowSubscription((appWindow) => appWindow.listen(CONTEXTS_CHANGED, () => refresh()));
 
 const mainContext = $derived(appData?.contexts.find((c) => c.is_main) ?? null);
 // Two-tier sidebar order: shortcut-assigned contexts first (auto-ordered by

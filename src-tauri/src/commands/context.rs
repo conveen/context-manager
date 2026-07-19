@@ -8,7 +8,7 @@ use crate::state::{AppData, AppState, Context};
 
 /// Returns the current `AppData` snapshot (all Contexts and Settings).
 #[tauri::command]
-pub fn get_app_data(app: tauri::AppHandle) -> AppData {
+pub fn get_app_data<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> AppData {
     app.state::<AppState>().data.lock().unwrap().clone()
 }
 
@@ -19,7 +19,7 @@ pub fn get_app_data(app: tauri::AppHandle) -> AppData {
 /// the active Context remains the sole visible one. Returns the newly created
 /// `Context`.
 #[tauri::command]
-pub fn create_context(app: tauri::AppHandle) -> Context {
+pub fn create_context<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Context {
     let state = app.state::<AppState>();
     let mut data = state.data.lock().unwrap();
     // First unused default name. Deriving <n> from the Context count alone can
@@ -56,7 +56,7 @@ pub fn create_context(app: tauri::AppHandle) -> Context {
 /// - Returns `Err` if the new name is "main" (reserved).
 /// - Returns `Err` if the new name is already used by another Context.
 #[tauri::command]
-pub fn rename_context(app: tauri::AppHandle, id: String, name: String) -> Result<(), String> {
+pub fn rename_context<R: tauri::Runtime>(app: tauri::AppHandle<R>, id: String, name: String) -> Result<(), String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err("Context name cannot be empty".to_string());
@@ -88,7 +88,7 @@ pub fn rename_context(app: tauri::AppHandle, id: String, name: String) -> Result
 /// # Errors
 /// Returns `Err` if `id` refers to the Main Context or does not exist.
 #[tauri::command]
-pub fn delete_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
+pub fn delete_context<R: tauri::Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
     // Validate and check whether we need to hide windows.
     let needs_hide = {
         let state = app.state::<AppState>();
@@ -127,7 +127,11 @@ pub fn delete_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
 /// - Returns `Err` if the index is greater than 9 — only `<meta>+0`–`9`
 ///   shortcuts exist, so a larger index would be stored but never fire.
 #[tauri::command]
-pub fn assign_shortcut(app: tauri::AppHandle, id: String, index: Option<u8>) -> Result<(), String> {
+pub fn assign_shortcut<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+    index: Option<u8>,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut data = state.data.lock().unwrap();
     let ci = ctx_idx(&data, &id)?;
@@ -172,7 +176,7 @@ pub fn assign_shortcut(app: tauri::AppHandle, id: String, index: Option<u8>) -> 
 ///   appears more than once, or if `ordered_ids` does not cover exactly the set
 ///   of currently-unassigned Contexts.
 #[tauri::command]
-pub fn reorder_contexts(app: tauri::AppHandle, ordered_ids: Vec<String>) -> Result<(), String> {
+pub fn reorder_contexts<R: tauri::Runtime>(app: tauri::AppHandle<R>, ordered_ids: Vec<String>) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut data = state.data.lock().unwrap();
 
@@ -205,4 +209,44 @@ pub fn reorder_contexts(app: tauri::AppHandle, ordered_ids: Vec<String>) -> Resu
     data.normalize_order();
     let _ = state.save_tx.send(data.clone());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tauri::Manager;
+
+    use super::*;
+    use crate::test_util::{app_data, ctx, main_ctx, mock_app};
+
+    // Seed test proving the MockRuntime harness: a real command body runs
+    // against a real AppState, and the save channel is signalled.
+    #[test]
+    fn create_context_uses_first_unused_default_name_and_signals_save() {
+        let (app, rx) = mock_app(app_data(vec![main_ctx("m", true, vec![])]));
+        assert!(!rx.has_changed().unwrap());
+
+        let first = create_context(app.handle().clone());
+        assert_eq!(first.name, "context-1");
+        assert!(!first.is_main);
+        assert_eq!(first.shortcut_index, None);
+        assert!(first.visible);
+        assert!(rx.has_changed().unwrap());
+
+        let second = create_context(app.handle().clone());
+        assert_eq!(second.name, "context-2");
+
+        let state = app.state::<crate::state::AppState>();
+        assert_eq!(state.data.lock().unwrap().contexts.len(), 3);
+    }
+
+    #[test]
+    fn rename_context_rejects_reserved_and_duplicate_names() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![])]));
+        let handle = app.handle();
+        assert!(rename_context(handle.clone(), "a".into(), "  ".into()).is_err());
+        assert!(rename_context(handle.clone(), "a".into(), "Main".into()).is_err());
+        assert!(rename_context(handle.clone(), "a".into(), "main".into()).is_err());
+        assert!(rename_context(handle.clone(), "missing".into(), "x".into()).is_err());
+        assert!(rename_context(handle.clone(), "a".into(), "focus".into()).is_ok());
+    }
 }

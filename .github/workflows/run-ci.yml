@@ -80,5 +80,8 @@ jobs:
       - name: Lint code
         run: ./run.sh -l lint
 
+      - name: Run tests
+        run: ./run.sh -l test
+
       - name: Build application
         run: ./run.sh -l exec npm run tauri build -- --no-bundle --ci

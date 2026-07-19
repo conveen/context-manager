@@ -245,6 +245,8 @@ run-shell() {
 run-test() {
     info "Running unit and integration tests for all packages"
     cargo test --workspace --all-features "${@}"
+    info "Running frontend tests with Vitest"
+    npm run test
 }
 
 run-test-coverage() {
@@ -281,7 +283,7 @@ print-usage() {
     echo "publish           publish package to crates.io"
     echo "push-base         push build container image to registry"
     echo "shell             start Bash shell"
-    echo "test              cargo-test: run unit, documentation, and integration tests"
+    echo "test              run Rust (cargo-test) and frontend (Vitest) tests"
     echo "test-coverage     cargo-llvm-cov: run code coverage for all packages with tests"
     echo "update-deps       cargo-update: update dependencies in Cargo.lock file"
     echo
