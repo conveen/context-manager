@@ -54,7 +54,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let app_handle = app.handle().clone();
     let mut builder =
         TrayIconBuilder::with_id("main-tray").menu(&menu).on_menu_event(move |_app, event| match event.id().as_ref() {
-            "open-main" => commands::open_main_window(app_handle.clone()),
+            "open-main" => commands::open_main_window(&app_handle),
             "quit" => app_handle.exit(0),
             _ => {},
         });
@@ -139,26 +139,26 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.on_menu_event(move |_app, event| {
                 if event.id().as_ref() == "settings" {
-                    let _ = commands::open_settings(app_handle.clone());
+                    let _ = commands::open_settings(&app_handle);
                 }
             });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_app_data,
-            commands::create_context,
-            commands::rename_context,
-            commands::delete_context,
-            commands::assign_shortcut,
-            commands::reorder_contexts,
-            commands::add_window_to_context,
-            commands::remove_window_from_context,
-            commands::show_context,
-            commands::hide_context,
-            commands::update_settings,
+            commands::context::get_app_data,
+            commands::context::create_context,
+            commands::context::rename_context,
+            commands::context::delete_context,
+            commands::context::assign_shortcut,
+            commands::context::reorder_contexts,
+            commands::membership::add_window_to_context,
+            commands::membership::remove_window_from_context,
+            commands::visibility::show_context,
+            commands::visibility::hide_context,
+            commands::settings::update_settings,
             #[cfg(debug_assertions)]
-            commands::open_devtools,
+            commands::settings::open_devtools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

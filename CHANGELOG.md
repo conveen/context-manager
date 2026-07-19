@@ -32,6 +32,7 @@ How to cut a release:
 
 - Replaced the per-window "original position" hidden marker with a plain `hidden` flag — hiding a window no longer reads its position on macOS, since nothing ever restored from it. Existing saved state loads unchanged; a window that was hidden at upgrade time loses its marker once and stays minimized until shown manually. ([#70](https://github.com/conveen/context-manager/pull/70))
 - Internal cleanup: deduplicated the backend's window-state propagation, z-order capture, and membership show/hide reconciliation, collapsed the hotkey digit dispatch, merged the platform menu-setup variants, removed a dead line in the persistence saver, extracted the frontend's repeated window-event listener boilerplate (also fixing a listener leak when a component tore down before its subscription resolved) and Settings save handlers, and removed the unused or Rust-only command API surface (`get_settings`, `hide_all`, `open_settings`, `open_main_window`). ([#70](https://github.com/conveen/context-manager/pull/70))
+- Internal: split the backend command module into per-concern files (`context`, `membership`, `visibility`, `settings`) and switched internal show/hide and menu/tray calls to borrowed `AppHandle`s. ([#71](https://github.com/conveen/context-manager/pull/71))
 
 ### Fixed
 
