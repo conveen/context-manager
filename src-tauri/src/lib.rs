@@ -7,6 +7,8 @@ use tauri_plugin_global_shortcut::ShortcutState;
 use tokio::sync::watch;
 
 mod commands;
+#[cfg(test)]
+mod contract;
 mod events;
 mod hotkeys;
 mod persistence;

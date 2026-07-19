@@ -1,0 +1,4 @@
+{
+    "_comment": "Backend→frontend event names. The single source of truth asserted by both test suites: src-tauri/src/contract.rs and src/lib/contract.test.ts. Add new events here first.",
+    "backend_to_frontend": ["contexts-changed", "show-settings"]
+}

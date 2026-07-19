@@ -1,0 +1,63 @@
+{
+    "_comment": "Representative persisted AppData asserted by both test suites: the backend round-trips it (src-tauri/src/contract.rs), the frontend type-checks and parses it (src/lib/contract.test.ts). Includes the macOS-only window fields (pid, hidden_z), which the Windows build and the frontend ignore.",
+    "contexts": [
+        {
+            "id": "0a0a0a0a-1111-4222-8333-444444444444",
+            "name": "main",
+            "is_main": true,
+            "windows": [
+                {
+                    "platform_id": 101,
+                    "pid": 4242,
+                    "app_name": "Terminal",
+                    "window_title": "zsh — 80×24",
+                    "hidden": false,
+                    "hidden_z": null
+                },
+                {
+                    "platform_id": 102,
+                    "pid": 4243,
+                    "app_name": "Slack",
+                    "window_title": "Slack - workspace",
+                    "hidden": true,
+                    "hidden_z": 1
+                }
+            ],
+            "shortcut_index": 0,
+            "order": 0,
+            "visible": true
+        },
+        {
+            "id": "0b0b0b0b-1111-4222-8333-555555555555",
+            "name": "deep-work",
+            "is_main": false,
+            "windows": [
+                {
+                    "platform_id": 102,
+                    "pid": 4243,
+                    "app_name": "Slack",
+                    "window_title": "Slack - workspace",
+                    "hidden": true,
+                    "hidden_z": 1
+                }
+            ],
+            "shortcut_index": 1,
+            "order": 1,
+            "visible": false
+        },
+        {
+            "id": "0c0c0c0c-1111-4222-8333-666666666666",
+            "name": "context-1",
+            "is_main": false,
+            "windows": [],
+            "shortcut_index": null,
+            "order": 2,
+            "visible": true
+        }
+    ],
+    "settings": {
+        "meta_key": "CmdOpt",
+        "single_context_mode": true,
+        "single_context_id": "0b0b0b0b-1111-4222-8333-555555555555"
+    }
+}
