@@ -102,8 +102,6 @@ pub struct Settings {
     /// resolves to the Main Context. Only meaningful while `single_context_mode`.
     #[serde(default)]
     pub single_context_id: Option<String>,
-    /// Whether the application should start automatically at user login.
-    pub launch_at_login: bool,
 }
 
 /// The full persisted application state: all Contexts and user settings.
@@ -173,12 +171,7 @@ impl Default for AppData {
                 order: 0,
                 visible: true,
             }],
-            settings: Settings {
-                meta_key: MetaKey::CtrlAlt,
-                single_context_mode: false,
-                single_context_id: None,
-                launch_at_login: false,
-            },
+            settings: Settings { meta_key: MetaKey::CtrlAlt, single_context_mode: false, single_context_id: None },
         }
     }
 }

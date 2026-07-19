@@ -52,19 +52,6 @@ hiding item below). Investigate a public-API alternative (e.g. disambiguating by
 if none is acceptable, document title-matching as an accepted limitation and
 keep the poll refresh as the mitigation.
 
-### Launch at Login does nothing
-**Status:** open · **Severity:** medium
-
-The Settings UI ([Settings.svelte](src/Settings.svelte)) has a "Launch at
-Login" toggle that persists a `launch_at_login` boolean via `update_settings`,
-but nothing ever registers the app with the OS login items. There is no
-autostart plugin in the dependencies, so the toggle is currently a no-op that
-misleads the user.
-
-**Suggested fix:** add `tauri-plugin-autostart`, and enable/disable the OS
-autostart entry in `update_settings` (or a dedicated command) whenever the flag
-changes. Reconcile the stored flag against the actual OS state on startup.
-
 ---
 
 ## Features / Enhancements

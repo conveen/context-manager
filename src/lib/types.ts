@@ -26,7 +26,6 @@ export interface Settings {
     // Context forced to be the only visible one in Single Context Mode.
     // null (or a stale id) resolves to the Main Context on the backend.
     single_context_id: string | null;
-    launch_at_login: boolean;
 }
 
 export interface AppData {

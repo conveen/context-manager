@@ -57,7 +57,6 @@ Context Manager lives in your menu bar (macOS) or system tray (Windows), and min
 - **Single Context Mode** — automatically hide other Contexts whenever you
   switch to a new one, so exactly one Context is ever on screen. Pick which
   Context it starts on from the dropdown beside the toggle (defaults to `main`).
-- **Launch at login** — have Context Manager ready as soon as you log in.
 
 ![Settings pane](docs/screenshots/settings.png)
 

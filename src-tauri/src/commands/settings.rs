@@ -12,7 +12,7 @@ use crate::state::{AppState, Settings};
 /// If the update turns Single Context Mode **on**, or changes the chosen Context
 /// while it is on, the chosen Context is force-shown — which, because the mode is
 /// now on, causes the show logic to hide every other Context. Unrelated settings
-/// edits (meta key, launch-at-login, toggling the mode off) don't move any
+/// edits (meta key, toggling the mode off) don't move any
 /// windows. The chosen Context is resolved from `single_context_id`, falling back
 /// to Main when it is unset or names a Context that no longer exists.
 ///
