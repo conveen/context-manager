@@ -88,6 +88,24 @@ windowSubscription((appWindow) =>
     }),
 );
 
+// Open settings from the keyboard. The native menu item carries the same
+// accelerator, but on Windows WebView2 owns focus and handles accelerator
+// keys in its own pipeline before the Win32 accelerator table sees them, so
+// the menu accelerator never fires there (tauri-apps/wry#451). Handling it in
+// the webview works on both platforms. On macOS the native Cmd+, still fires
+// too, but since this only sets showSettings = true it's an idempotent no-op —
+// not worth a platform check to suppress.
+$effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+        if (e.key === "," && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+            e.preventDefault();
+            showSettings = true;
+        }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+});
+
 // Refresh immediately when the backend changes context visibility
 // (e.g. via global shortcuts) instead of waiting for the periodic poll.
 windowSubscription((appWindow) => appWindow.listen("contexts-changed", () => refresh()));

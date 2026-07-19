@@ -45,6 +45,7 @@ How to cut a release:
 - On Windows, hiding a Context no longer permanently drops its windows. Hidden windows are now correctly remembered as hidden, survive the background poll, and can be shown again. ([#67](https://github.com/conveen/context-manager/pull/67))
 - Contexts created while Single Context Mode is enabled now start hidden, so the active Context remains the only visible one instead of two Contexts becoming visible at once. ([#68](https://github.com/conveen/context-manager/pull/68))
 - Failed operations in the main window — renaming, deleting, shortcut assignment, reordering, creating a Context, toggling visibility, and drag-and-drop window changes — now show an error toast instead of failing silently, and rejected drag-and-drop changes snap back immediately. ([#69](https://github.com/conveen/context-manager/pull/69))
+- The `Ctrl+,` / `Cmd+,` shortcut now opens the Settings page on Windows. Previously the native menu accelerator never fired there because WebView2 handles accelerator keys before the Win32 menu accelerator table sees them; the shortcut is now handled in the webview so it works on both platforms. ([#74](https://github.com/conveen/context-manager/pull/74))
 
 ### Removed
 
