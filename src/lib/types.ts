@@ -2,7 +2,8 @@ export interface WindowRef {
     platform_id: number;
     app_name: string;
     window_title: string;
-    original_position: [number, number] | null;
+    // True while the window is hidden by us (minimized / SW_HIDE).
+    hidden: boolean;
 }
 
 export interface Context {

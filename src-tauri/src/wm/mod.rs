@@ -86,9 +86,9 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 ///    (absent from the enumeration) keep the title captured when they were hidden.
 /// 2. **Removals**: any `WindowRef` whose `platform_id` is no longer present
 ///    in the live window list is removed from every Context it belongs to,
-///    *unless* it is currently hidden by us (`original_position.is_some()`) —
-///    a hidden window is minimized and thus absent from the on-screen
-///    enumeration, but still exists and must remain tracked.
+///    *unless* it is currently hidden by us (`hidden`) — a hidden window is
+///    minimized and thus absent from the on-screen enumeration, but still
+///    exists and must remain tracked.
 /// 3. **Additions**: any live window whose `platform_id` is not tracked in any
 ///    Context is added to the Main Context as a new `WindowRef`.
 ///
@@ -152,12 +152,12 @@ pub fn update_windows(app: &tauri::AppHandle) {
     }
 
     // Remove closed windows from every context. Windows we have intentionally
-    // hidden (`original_position.is_some()`) are exempt: on macOS a hidden
-    // window is minimized and therefore absent from the on-screen enumeration,
-    // but it still exists and must stay tracked so it can be shown again.
+    // hidden are exempt: a hidden window is minimized and therefore absent
+    // from the on-screen enumeration, but it still exists and must stay
+    // tracked so it can be shown again.
     for ctx in &mut data.contexts {
         let before = ctx.windows.len();
-        ctx.windows.retain(|w| current_ids.contains(&w.platform_id) || w.original_position.is_some());
+        ctx.windows.retain(|w| current_ids.contains(&w.platform_id) || w.hidden);
         changed |= ctx.windows.len() != before;
     }
 
@@ -170,7 +170,7 @@ pub fn update_windows(app: &tauri::AppHandle) {
             pid: w.pid,
             app_name: w.app_name.clone(),
             window_title: w.window_title.clone(),
-            original_position: None,
+            hidden: false,
             #[cfg(target_os = "macos")]
             hidden_z: None,
         });
@@ -185,16 +185,11 @@ pub fn update_windows(app: &tauri::AppHandle) {
 /// Hides the given window by minimizing it (macOS) or calling
 /// `ShowWindow(SW_HIDE)` (Windows).
 ///
-/// On macOS, the window's current position is cached in
-/// `window.original_position` as a "hidden" marker, then the window is
-/// minimized via the Accessibility API (`AXMinimized = true`); un-minimizing
-/// restores its position and size.
-///
-/// On Windows, `SW_HIDE` preserves the window's position internally, so
-/// `window.original_position` is set to a sentinel whose value is never read —
-/// its presence is the "hidden by us" marker that keeps the background poll
-/// from dropping the (no longer enumerable) window and lets the show path
-/// find it.
+/// On macOS the window is minimized via the Accessibility API
+/// (`AXMinimized = true`); un-minimizing restores its position and size. On
+/// Windows, `SW_HIDE` preserves the window's position internally. Both set
+/// `window.hidden` — the marker that keeps the background poll from dropping
+/// the (no longer enumerable) window and lets the show path find it.
 ///
 /// # Arguments
 /// - `window`: Mutable reference to the tracked window. On macOS, `pid` must
@@ -223,12 +218,10 @@ pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
 /// `ShowWindow(SW_SHOW)` (Windows).
 ///
 /// On macOS, the window is un-minimized (`AXMinimized = false`, which restores
-/// its previous position and size) and `original_position` is cleared on
-/// success. If `original_position` is `None` the window is assumed to already
-/// be visible and `Ok(())` is returned immediately.
-///
-/// On Windows, `SW_SHOW` restores the window to its last known position
-/// regardless of `original_position`.
+/// its previous position and size) and the `hidden` marker is cleared on
+/// success; if the marker is already clear the window is assumed visible and
+/// `Ok(())` is returned immediately. On Windows, `SW_SHOW` restores the window
+/// to its last known position and the marker is cleared unconditionally.
 ///
 /// # Arguments
 /// - `window`: Mutable reference to the tracked window.

@@ -112,8 +112,8 @@ pub fn spawn_saver(app: tauri::AppHandle, mut rx: watch::Receiver<AppData>) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
-            // Absorb any writes that arrived during the sleep window
-            let _ = rx.has_changed();
+            // borrow_and_update absorbs any writes that arrived during the
+            // sleep window, so only the latest snapshot is written.
             let data = rx.borrow_and_update().clone();
             save(&app, &data);
         }

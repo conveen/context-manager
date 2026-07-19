@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Settings, MetaKey, Context } from "./lib/types";
+import type { Settings, Context } from "./lib/types";
 import * as api from "./lib/api";
 
 let settings = $state<Settings | null>(null);
@@ -30,7 +30,12 @@ async function loadSettings() {
     }
 }
 
-async function saveSettings(updatedSettings: Settings) {
+// Shared by every setting control: merges the changed field(s) into the
+// current settings and persists, guarding against saves before load or while
+// one is already in flight.
+async function saveField(patch: Partial<Settings>) {
+    if (!settings || saving) return;
+    const updatedSettings = { ...settings, ...patch };
     saving = true;
     error = null;
     success = false;
@@ -46,33 +51,6 @@ async function saveSettings(updatedSettings: Settings) {
     } finally {
         saving = false;
     }
-}
-
-async function updateMetaKey(newKey: MetaKey) {
-    if (!settings || saving) return;
-    const updated = { ...settings, meta_key: newKey };
-    await saveSettings(updated);
-}
-
-async function handleSingleContextModeChange(e: Event) {
-    if (!settings || saving) return;
-    const checked = (e.target as HTMLInputElement).checked;
-    const updated = { ...settings, single_context_mode: checked };
-    await saveSettings(updated);
-}
-
-async function handleSingleContextChange(e: Event) {
-    if (!settings || saving) return;
-    const id = (e.target as HTMLSelectElement).value;
-    const updated = { ...settings, single_context_id: id };
-    await saveSettings(updated);
-}
-
-async function handleLaunchAtLoginChange(e: Event) {
-    if (!settings || saving) return;
-    const checked = (e.target as HTMLInputElement).checked;
-    const updated = { ...settings, launch_at_login: checked };
-    await saveSettings(updated);
 }
 
 $effect(() => {
@@ -112,7 +90,7 @@ $effect(() => {
                         class="option-btn"
                         class:active={settings.meta_key === "CtrlAlt"}
                         disabled={saving}
-                        onclick={() => updateMetaKey("CtrlAlt")}
+                        onclick={() => saveField({ meta_key: "CtrlAlt" })}
                     >
                         <span class="option-name">Ctrl+Alt</span>
                         <span class="option-desc">Windows & Linux style</span>
@@ -121,7 +99,7 @@ $effect(() => {
                         class="option-btn"
                         class:active={settings.meta_key === "CmdOpt"}
                         disabled={saving}
-                        onclick={() => updateMetaKey("CmdOpt")}
+                        onclick={() => saveField({ meta_key: "CmdOpt" })}
                     >
                         <span class="option-name">Cmd+Opt</span>
                         <span class="option-desc">macOS native</span>
@@ -141,7 +119,7 @@ $effect(() => {
                             type="checkbox"
                             checked={settings.single_context_mode}
                             disabled={saving}
-                            onchange={handleSingleContextModeChange}
+                            onchange={(e) => saveField({ single_context_mode: e.currentTarget.checked })}
                         />
                         <span class="toggle-box"></span>
                         <span class="toggle-text">
@@ -159,7 +137,7 @@ $effect(() => {
                             class="ctx-select"
                             value={selectedCtxId}
                             disabled={saving}
-                            onchange={handleSingleContextChange}
+                            onchange={(e) => saveField({ single_context_id: e.currentTarget.value })}
                         >
                             {#each contexts as ctx (ctx.id)}
                                 <option value={ctx.id}>{ctx.name}</option>
@@ -185,7 +163,7 @@ $effect(() => {
                         type="checkbox"
                         checked={settings.launch_at_login}
                         disabled={saving}
-                        onchange={handleLaunchAtLoginChange}
+                        onchange={(e) => saveField({ launch_at_login: e.currentTarget.checked })}
                     />
                     <span class="toggle-box"></span>
                     <span class="toggle-text">
