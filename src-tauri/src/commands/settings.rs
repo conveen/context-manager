@@ -106,3 +106,127 @@ pub fn open_devtools<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
         win.open_devtools();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use tauri::Listener;
+
+    use super::*;
+    use crate::hotkeys::mock as hotkey_mock;
+    use crate::state::{AppData, MetaKey};
+    use crate::test_util::{app_data, ctx, main_ctx, mock_app, win};
+    use crate::wm::mock as wm_mock;
+
+    fn visible(data: &AppData, id: &str) -> bool {
+        data.contexts.iter().find(|c| c.id == id).unwrap().visible
+    }
+
+    /// `update_settings` takes a full Settings value; build one from the
+    /// current state with the given tweaks applied.
+    fn settings_from(app: &tauri::AppHandle<tauri::test::MockRuntime>, f: impl FnOnce(&mut Settings)) -> Settings {
+        let state = app.state::<AppState>();
+        let mut settings = state.data.lock().unwrap().settings.clone();
+        f(&mut settings);
+        settings
+    }
+
+    #[test]
+    fn enabling_single_context_mode_force_shows_the_chosen_context() {
+        let (app, _rx) =
+            mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", false, vec![win(2, true)])]));
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        app.listen_any(crate::events::CONTEXTS_CHANGED, move |_| {
+            h.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let new = settings_from(app.handle(), |s| {
+            s.single_context_mode = true;
+            s.single_context_id = Some("a".to_string());
+        });
+        update_settings(app.handle().clone(), new).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(visible(&data, "a"), "the chosen Context is force-shown");
+        assert!(!visible(&data, "m"), "other Contexts are hidden under the mode");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the frontend is nudged to refresh");
+    }
+
+    #[test]
+    fn stale_or_missing_choice_falls_back_to_main() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", false, vec![win(1, true)]), ctx("a", true, vec![])]));
+        let new = settings_from(app.handle(), |s| {
+            s.single_context_mode = true;
+            s.single_context_id = Some("deleted-long-ago".to_string());
+        });
+        update_settings(app.handle().clone(), new).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(visible(&data, "m"), "a stale id resolves to Main");
+        assert!(!visible(&data, "a"));
+    }
+
+    #[test]
+    fn changing_the_choice_while_the_mode_is_on_switches_contexts() {
+        let mut initial = app_data(vec![main_ctx("m", false, vec![]), ctx("a", true, vec![]), ctx("b", false, vec![])]);
+        initial.settings.single_context_mode = true;
+        initial.settings.single_context_id = Some("a".to_string());
+        let (app, _rx) = mock_app(initial);
+
+        let new = settings_from(app.handle(), |s| s.single_context_id = Some("b".to_string()));
+        update_settings(app.handle().clone(), new).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(visible(&data, "b"));
+        assert!(!visible(&data, "a"));
+    }
+
+    #[test]
+    fn unrelated_edits_move_no_windows_and_touch_no_hotkeys() {
+        // Turning the mode OFF (and leaving the meta key alone) is the
+        // documented no-op case for window movement and rebinding.
+        let mut initial = app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", false, vec![])]);
+        initial.settings.single_context_mode = true;
+        let (app, rx) = mock_app(initial);
+
+        let new = settings_from(app.handle(), |s| s.single_context_mode = false);
+        update_settings(app.handle().clone(), new).unwrap();
+
+        assert!(wm_mock::calls().is_empty(), "no windows move");
+        assert!(hotkey_mock::calls().is_empty(), "no rebinding");
+        assert!(rx.has_changed().unwrap(), "the edit itself is saved");
+    }
+
+    #[test]
+    fn changing_the_meta_key_rebinds_the_global_shortcuts() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![])]));
+        let new = settings_from(app.handle(), |s| s.meta_key = MetaKey::CmdOpt);
+        update_settings(app.handle().clone(), new).unwrap();
+
+        assert_eq!(hotkey_mock::calls(), vec![hotkey_mock::Call::Reregister]);
+        let state = app.state::<AppState>();
+        assert_eq!(state.data.lock().unwrap().settings.meta_key, MetaKey::CmdOpt);
+    }
+
+    #[test]
+    fn failed_rebinding_rolls_back_the_meta_key_and_restores_the_old_binding() {
+        let (app, rx) = mock_app(app_data(vec![main_ctx("m", true, vec![])]));
+        hotkey_mock::push_result(Err("combination already claimed".to_string()));
+
+        let new = settings_from(app.handle(), |s| s.meta_key = MetaKey::CmdOpt);
+        let result = update_settings(app.handle().clone(), new);
+
+        assert!(result.is_err());
+        // First call failed to apply the new modifier; the second restores the old one.
+        assert_eq!(hotkey_mock::calls(), vec![hotkey_mock::Call::Reregister, hotkey_mock::Call::Reregister]);
+        let state = app.state::<AppState>();
+        assert_eq!(state.data.lock().unwrap().settings.meta_key, MetaKey::CtrlAlt, "the meta key is rolled back");
+        assert!(rx.has_changed().unwrap(), "the rollback is saved");
+    }
+}

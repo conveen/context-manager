@@ -298,3 +298,76 @@ pub fn start_poll<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::mock::{self, mock_win};
+    use super::*;
+    use crate::test_util::{app_data, ctx, main_ctx, mock_app, win};
+
+    #[test]
+    fn refreshes_titles_and_app_names_of_live_windows() {
+        // win(1, …) stores app_name "App1" / title "Win1".
+        let (app, rx) =
+            mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![win(1, false)])]));
+        mock::set_windows(vec![mock_win(1, "Renamed", "NewTitle")]);
+        update_windows(app.handle());
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        for c in &data.contexts {
+            assert_eq!(c.windows[0].window_title, "NewTitle", "refreshed in every Context copy");
+            assert_eq!(c.windows[0].app_name, "Renamed");
+        }
+        drop(data);
+        assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn removes_closed_windows_but_keeps_hidden_ones() {
+        // Window 1 is gone from the enumeration and not hidden → dropped
+        // everywhere. Window 2 is also absent but hidden by us → kept.
+        let (app, rx) = mock_app(app_data(vec![
+            main_ctx("m", true, vec![win(1, false), win(2, true)]),
+            ctx("a", false, vec![win(1, false)]),
+        ]));
+        mock::set_windows(vec![]);
+        update_windows(app.handle());
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let main = data.contexts.iter().find(|c| c.is_main).unwrap();
+        assert_eq!(main.windows.len(), 1);
+        assert_eq!(main.windows[0].platform_id, 2, "the hidden window survives the poll");
+        assert!(data.contexts.iter().find(|c| c.id == "a").unwrap().windows.is_empty());
+        drop(data);
+        assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn adds_untracked_windows_to_main() {
+        let (app, rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![])]));
+        mock::set_windows(vec![mock_win(1, "App1", "Win1"), mock_win(3, "NewApp", "NewWin")]);
+        update_windows(app.handle());
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let main = data.contexts.iter().find(|c| c.is_main).unwrap();
+        let ids: Vec<u64> = main.windows.iter().map(|w| w.platform_id).collect();
+        assert_eq!(ids, vec![1, 3]);
+        assert!(!main.windows[1].hidden);
+        assert!(data.contexts.iter().find(|c| c.id == "a").unwrap().windows.is_empty());
+        drop(data);
+        assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn quiet_tick_does_not_signal_the_save_channel() {
+        // Regression guard for the #61 class: an unchanged window set must
+        // not wake the debounced saver.
+        let (app, rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false), win(2, true)])]));
+        mock::set_windows(vec![mock_win(1, "App1", "Win1")]);
+        update_windows(app.handle());
+        assert!(!rx.has_changed().unwrap());
+    }
+}

@@ -161,3 +161,102 @@ mod tests {
         assert_eq!(load_from(&path), data);
     }
 }
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    use crate::state::MetaKey;
+
+    /// State persisted by older versions: windows without `hidden` (and
+    /// without `pid`/`hidden_z` on macOS), Contexts without `order`, settings
+    /// without `single_context_id` and with the removed `launch_at_login` key.
+    const LEGACY_JSON: &str = r#"{
+        "contexts": [
+            {
+                "id": "m",
+                "name": "main",
+                "is_main": true,
+                "windows": [{"platform_id": 1, "app_name": "A", "window_title": "T"}],
+                "shortcut_index": 0,
+                "visible": true
+            },
+            {
+                "id": "a",
+                "name": "work",
+                "is_main": false,
+                "windows": [],
+                "shortcut_index": null,
+                "visible": false
+            }
+        ],
+        "settings": {"meta_key": "CmdOpt", "single_context_mode": true, "launch_at_login": true}
+    }"#;
+
+    #[test]
+    fn legacy_state_loads_with_serde_defaults_and_normalized_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.json");
+        std::fs::write(&path, LEGACY_JSON).unwrap();
+        let data = load_from(&path);
+
+        // Unknown keys (launch_at_login) are ignored; missing optional fields
+        // take their serde defaults.
+        assert_eq!(data.settings.meta_key, MetaKey::CmdOpt);
+        assert!(data.settings.single_context_mode);
+        assert_eq!(data.settings.single_context_id, None);
+
+        // Missing `order` defaults to 0 for both, then normalize_order
+        // renumbers by array position, preserving the stored sidebar order.
+        assert_eq!(data.contexts[0].order, 0);
+        assert_eq!(data.contexts[1].order, 1);
+
+        let w = &data.contexts[0].windows[0];
+        assert!(!w.hidden, "missing hidden defaults to false");
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(w.pid, 0, "missing pid defaults to 0 (cleaned up by the poll)");
+            assert_eq!(w.hidden_z, None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod saver_tests {
+    use super::*;
+    use crate::test_util::{app_data, ctx, main_ctx};
+
+    // Paused tokio time: sleeps auto-advance instantly once all tasks are
+    // idle, so the debounce window is exercised deterministically.
+    #[tokio::test(start_paused = true)]
+    async fn saver_debounces_and_coalesces_rapid_sends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.json");
+        let initial = app_data(vec![main_ctx("m", true, vec![])]);
+        let (tx, rx) = watch::channel(initial.clone());
+        let saver = tokio::spawn(run_saver(path.clone(), rx));
+
+        // Two rapid sends inside one debounce window. Normalized before
+        // sending so the disk round-trip (which normalizes on load) compares
+        // equal to the in-memory value.
+        let mut v1 = initial.clone();
+        v1.contexts.push(ctx("a", true, vec![]));
+        v1.normalize_order();
+        tx.send(v1).unwrap();
+        let mut v2 = initial.clone();
+        v2.contexts.push(ctx("b", true, vec![]));
+        v2.normalize_order();
+        tx.send(v2.clone()).unwrap();
+
+        // Just before the debounce fires: nothing on disk yet.
+        tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS - 1)).await;
+        assert!(!path.exists(), "no write before the debounce window closes");
+
+        // Let the debounce elapse: exactly the latest snapshot is written.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(load_from(&path), v2, "only the coalesced latest snapshot is written");
+
+        // Dropping the sender ends the saver task.
+        drop(tx);
+        saver.await.unwrap();
+    }
+}

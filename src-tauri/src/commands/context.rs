@@ -216,7 +216,7 @@ mod tests {
     use tauri::Manager;
 
     use super::*;
-    use crate::test_util::{app_data, ctx, main_ctx, mock_app};
+    use crate::test_util::{app_data, ctx, main_ctx, mock_app, win};
 
     // Seed test proving the MockRuntime harness: a real command body runs
     // against a real AppState, and the save channel is signalled.
@@ -248,5 +248,163 @@ mod tests {
         assert!(rename_context(handle.clone(), "a".into(), "main".into()).is_err());
         assert!(rename_context(handle.clone(), "missing".into(), "x".into()).is_err());
         assert!(rename_context(handle.clone(), "a".into(), "focus".into()).is_ok());
+    }
+
+    #[test]
+    fn rename_rejects_names_held_by_other_contexts_and_trims_whitespace() {
+        let (app, _rx) =
+            mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![]), ctx("b", true, vec![])]));
+        let handle = app.handle();
+        // ctx() names Contexts "name-<id>".
+        assert!(rename_context(handle.clone(), "a".into(), "name-b".into()).is_err());
+        assert!(rename_context(handle.clone(), "a".into(), "  focus  ".into()).is_ok());
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert_eq!(data.contexts[1].name, "focus");
+    }
+
+    #[test]
+    fn create_context_reuses_freed_default_names() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![])]);
+        data.contexts[1].name = "context-2".to_string();
+        let (app, _rx) = mock_app(data);
+        // context-2 is taken but context-1 is free — the gap is filled first.
+        assert_eq!(create_context(app.handle().clone()).name, "context-1");
+        assert_eq!(create_context(app.handle().clone()).name, "context-3");
+    }
+
+    #[test]
+    fn create_context_starts_hidden_under_single_context_mode() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![])]);
+        data.settings.single_context_mode = true;
+        let (app, _rx) = mock_app(data);
+        let created = create_context(app.handle().clone());
+        assert!(!created.visible, "the active Context must remain the sole visible one");
+    }
+
+    #[test]
+    fn new_contexts_join_the_end_of_the_unassigned_tier() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![])]));
+        let created = create_context(app.handle().clone());
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let max_other = data.contexts.iter().filter(|c| c.id != created.id).map(|c| c.order).max().unwrap();
+        let created_order = data.contexts.iter().find(|c| c.id == created.id).unwrap().order;
+        assert!(created_order > max_other);
+    }
+
+    #[test]
+    fn delete_context_rejects_main_and_unknown_ids() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![])]));
+        assert!(delete_context(app.handle().clone(), "m".into()).is_err());
+        assert!(delete_context(app.handle().clone(), "ghost".into()).is_err());
+    }
+
+    #[test]
+    fn deleting_a_visible_context_hides_its_exclusive_windows_first() {
+        use crate::wm::mock::{self, Call};
+        // Window 1 is shared with visible main; window 2 is exclusive to a.
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", true, vec![win(1, false)]),
+            ctx("a", true, vec![win(1, false), win(2, false)]),
+        ]));
+        delete_context(app.handle().clone(), "a".into()).unwrap();
+
+        assert_eq!(mock::calls(), vec![Call::Hide(2)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert_eq!(data.contexts.len(), 1);
+        assert!(!data.contexts[0].windows[0].hidden, "the shared window stays visible in main");
+    }
+
+    #[test]
+    fn deleting_a_hidden_context_touches_no_windows() {
+        use crate::wm::mock;
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", false, vec![win(2, true)])]));
+        delete_context(app.handle().clone(), "a".into()).unwrap();
+        assert!(mock::calls().is_empty());
+    }
+
+    #[test]
+    fn assign_shortcut_validates_range_and_the_reserved_zero() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![])]));
+        let handle = app.handle();
+        assert!(assign_shortcut(handle.clone(), "a".into(), Some(0)).is_err(), "0 is reserved for Main");
+        assert!(assign_shortcut(handle.clone(), "a".into(), Some(10)).is_err(), "only 0-9 shortcuts exist");
+        assert!(assign_shortcut(handle.clone(), "ghost".into(), Some(1)).is_err());
+        assert!(assign_shortcut(handle.clone(), "m".into(), Some(0)).is_ok(), "Main may keep 0");
+        assert!(assign_shortcut(handle.clone(), "a".into(), Some(9)).is_ok());
+    }
+
+    #[test]
+    fn assign_shortcut_steals_the_index_and_demotes_the_previous_holder() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![]), ctx("b", true, vec![])]);
+        data.contexts[1].shortcut_index = Some(1);
+        let (app, _rx) = mock_app(data);
+        assign_shortcut(app.handle().clone(), "b".into(), Some(1)).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let a = data.contexts.iter().find(|c| c.id == "a").unwrap();
+        let b = data.contexts.iter().find(|c| c.id == "b").unwrap();
+        assert_eq!(b.shortcut_index, Some(1), "the caller's intent wins");
+        assert_eq!(a.shortcut_index, None, "the previous holder is unassigned");
+        let max_other = data.contexts.iter().filter(|c| c.id != "a").map(|c| c.order).max().unwrap();
+        assert!(a.order > max_other, "the demoted Context lands at the end of the unassigned tier");
+    }
+
+    #[test]
+    fn clearing_a_shortcut_demotes_the_context_to_the_end_of_the_unassigned_tier() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![]), ctx("b", true, vec![])]);
+        data.contexts[1].shortcut_index = Some(1);
+        let (app, _rx) = mock_app(data);
+        assign_shortcut(app.handle().clone(), "a".into(), None).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let a = data.contexts.iter().find(|c| c.id == "a").unwrap();
+        assert_eq!(a.shortcut_index, None);
+        let max_other = data.contexts.iter().filter(|c| c.id != "a").map(|c| c.order).max().unwrap();
+        assert!(a.order > max_other);
+    }
+
+    #[test]
+    fn reorder_contexts_applies_the_new_unassigned_order() {
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", true, vec![]),
+            ctx("b", true, vec![]),
+            ctx("c", true, vec![]),
+            ctx("d", true, vec![]),
+        ]));
+        reorder_contexts(app.handle().clone(), vec!["d".into(), "b".into(), "c".into()]).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let order_of = |id: &str| data.contexts.iter().find(|c| c.id == id).unwrap().order;
+        assert!(order_of("d") < order_of("b"));
+        assert!(order_of("b") < order_of("c"));
+    }
+
+    #[test]
+    fn reorder_contexts_rejects_invalid_sets() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("b", true, vec![]), ctx("c", true, vec![])]);
+        data.contexts[1].shortcut_index = Some(1); // b is shortcut-assigned
+        let (app, _rx) = mock_app(data);
+        let handle = app.handle();
+        // Shortcut-assigned Contexts are auto-ordered and off-limits.
+        assert!(reorder_contexts(handle.clone(), vec!["b".into(), "c".into()]).is_err());
+        assert!(reorder_contexts(handle.clone(), vec!["ghost".into()]).is_err());
+        assert!(reorder_contexts(handle.clone(), vec!["c".into(), "c".into()]).is_err());
+        // Must cover exactly the unassigned set (here: just c).
+        assert!(reorder_contexts(handle.clone(), vec![]).is_err());
+        assert!(reorder_contexts(handle.clone(), vec!["c".into()]).is_ok());
+    }
+
+    #[test]
+    fn get_app_data_returns_the_current_snapshot() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(7, false)])]));
+        let data = get_app_data(app.handle().clone());
+        assert_eq!(data.contexts.len(), 1);
+        assert_eq!(data.contexts[0].windows[0].platform_id, 7);
     }
 }
