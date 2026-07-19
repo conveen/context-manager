@@ -25,12 +25,6 @@ export const showContext = (id: string) => invoke<void>("show_context", { id });
 
 export const hideContext = (id: string) => invoke<void>("hide_context", { id });
 
-export const hideAll = () => invoke<void>("hide_all");
-
-export const getSettings = () => invoke<Settings>("get_settings");
-
 export const updateSettings = (settings: Settings) => invoke<void>("update_settings", { settings });
-
-export const openSettings = () => invoke<void>("open_settings");
 
 export const openDevtools = () => invoke<void>("open_devtools");

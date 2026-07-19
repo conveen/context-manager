@@ -148,23 +148,18 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 /// Windows implementation of `wm::hide_window`.
 ///
 /// Calls `ShowWindow(hwnd, SW_HIDE)`, which hides the window without
-/// destroying it, and sets `window.original_position` to a sentinel value.
-///
-/// The stored coordinates are meaningless and never read on Windows —
-/// `SW_SHOW` restores geometry natively — but setting the field is
-/// load-bearing: `original_position` doubles as the app-wide "hidden by us"
-/// marker. A hidden window fails the `IsWindowVisible` filter in `enumerate`,
-/// so without the marker the background poll would remove it from every
-/// Context — permanently, since a window that stays `SW_HIDE`-hidden is never
-/// re-enumerated — and the show path (which only targets windows with the
-/// marker set) would never un-hide it.
+/// destroying it (`SW_SHOW` restores geometry natively), and sets the
+/// `hidden` marker. The marker is load-bearing: a hidden window fails the
+/// `IsWindowVisible` filter in `enumerate`, so without it the background poll
+/// would remove the window from every Context — permanently, since a window
+/// that stays `SW_HIDE`-hidden is never re-enumerated — and the show path
+/// (which only targets marked windows) would never un-hide it.
 ///
 /// # Errors
 /// Always returns `Ok(())`. `SW_HIDE` is a fire-and-forget call; if the HWND
 /// is invalid or the window has already been destroyed the OS ignores it.
 pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
-    // Pure hidden marker on Windows; only its presence matters (see above).
-    window.original_position = Some([0.0, 0.0]);
+    window.hidden = true;
     unsafe {
         let _ = ShowWindow(HWND(window.platform_id as *mut _), SW_HIDE);
     }
@@ -174,9 +169,9 @@ pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
 /// Windows implementation of `wm::show_window`.
 ///
 /// Calls `ShowWindow(hwnd, SW_SHOW)`, which makes the window visible and
-/// restores it to its last known position and size as tracked by the OS.
-/// `window.original_position` is cleared on success, releasing the hidden
-/// marker set by `hide_window` so the window is treated as visible again.
+/// restores it to its last known position and size as tracked by the OS, then
+/// clears the `hidden` marker set by `hide_window` so the window is treated
+/// as visible again.
 ///
 /// # Errors
 /// Always returns `Ok(())` for the same reason as `hide_window`.
@@ -184,6 +179,6 @@ pub fn show_window(window: &mut WindowRef) -> Result<(), String> {
     unsafe {
         let _ = ShowWindow(HWND(window.platform_id as *mut _), SW_SHOW);
     }
-    window.original_position = None;
+    window.hidden = false;
     Ok(())
 }

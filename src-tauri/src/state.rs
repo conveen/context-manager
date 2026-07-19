@@ -5,9 +5,9 @@ use tokio::sync::watch;
 
 /// A reference to an OS window that is tracked within one or more Contexts.
 ///
-/// `original_position` is populated the first time the window is hidden and
-/// cleared when it is shown again, allowing the window to be restored to
-/// exactly where it was before it was hidden.
+/// `hidden` is set while the window is hidden by us and cleared when it is
+/// shown again; both platforms restore geometry natively on show, so no
+/// position needs to be remembered.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WindowRef {
     /// Stable OS-assigned window identifier: CGWindowID on macOS, HWND value on Windows.
@@ -24,12 +24,13 @@ pub struct WindowRef {
     pub app_name: String,
     /// Title of the window at the time it was added to a Context.
     pub window_title: String,
-    /// Hidden-by-us marker: `Some` while the window is hidden, `None` while it
-    /// is visible. On macOS the value is the screen coordinates `[x, y]`
-    /// captured just before hiding; on Windows it is a meaningless sentinel
-    /// (`SW_SHOW` restores geometry natively). Only the presence of the value
-    /// may be relied on cross-platform.
-    pub original_position: Option<[f64; 2]>,
+    /// Hidden-by-us marker: `true` while the window is hidden (minimized on
+    /// macOS, `SW_HIDE` on Windows), `false` while it is visible. Keeps the
+    /// background poll from dropping the (no longer enumerable) window and
+    /// gates the show path. Defaults to `false` for entries persisted before
+    /// this field replaced the old `original_position` marker.
+    #[serde(default)]
+    pub hidden: bool,
     /// Front-to-back stacking rank captured when the window was hidden (`0` =
     /// frontmost, larger = further back), used to restore z-order on show by
     /// un-minimizing back-to-front. macOS-only: hiding elsewhere preserves the OS

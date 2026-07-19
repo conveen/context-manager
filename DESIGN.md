@@ -58,19 +58,19 @@ WindowRef {
   platform_id: PlatformWindowId,  // CGWindowID on macOS, HWND on Windows
   app_name: String,
   window_title: String,
-  original_position: Option<Point>,  // set when first hidden
+  hidden: bool,  // set while hidden by us
 }
 ```
 
 ## Visibility Logic
 
 ### Hide a window
-1. Cache its current position in `WindowRef.original_position` (if not already set). On macOS this doubles as the "currently hidden" marker; the value itself is not needed to restore geometry.
+1. Set `WindowRef.hidden` — the "currently hidden by us" marker. Both platforms restore geometry natively on show, so no position is captured.
 2. Hide it: set `AXMinimized = true` (macOS) or `ShowWindow(SW_HIDE)` (Windows).
 
 ### Show a window
 1. Un-hide it: set `AXMinimized = false` (macOS, which restores the previous position and size) or `ShowWindow(SW_SHOW)` (Windows).
-2. Clear `original_position`.
+2. Clear `hidden`.
 
 **macOS z-order restoration:** when hiding, each window's front-to-back stacking
 rank is captured (`WindowRef.hidden_z`) from the `CGWindowList` order (which is

@@ -1,12 +1,13 @@
 <script lang="ts">
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebviewWindow, type WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalSize } from "@tauri-apps/api/window";
 import * as api from "./lib/api";
+import type { AppData } from "./lib/types";
 import Sidebar from "./components/Sidebar.svelte";
 import DetailPanel from "./components/DetailPanel.svelte";
 import Settings from "./Settings.svelte";
 
-let appData = $state<Awaited<ReturnType<typeof api.getAppData>> | null>(null);
+let appData = $state<AppData | null>(null);
 let selectedId = $state<string | null>(null);
 let showDetailPanel = $state(true);
 let showSettings = $state(false);
@@ -29,74 +30,65 @@ $effect(() => {
     return () => clearInterval(id);
 });
 
+// The subscribe/cleanup dance shared by the window-event effects below:
+// subscribe to the current webview window when the component mounts, and call
+// the returned unlisten function on teardown. If teardown wins the race
+// against the async subscription, the subscription is undone as soon as it
+// resolves. Must be called during component initialization ($effect rule).
+function windowSubscription(subscribe: (appWindow: WebviewWindow) => Promise<() => void>) {
+    $effect(() => {
+        let unlisten: (() => void) | null = null;
+        let cancelled = false;
+        (async () => {
+            const un = await subscribe(getCurrentWebviewWindow());
+            if (cancelled) un();
+            else unlisten = un;
+        })();
+        return () => {
+            cancelled = true;
+            unlisten?.();
+        };
+    });
+}
+
 // Listen for window focus/blur to resize and show/hide the detail panel.
 // On blur we capture the current width before collapsing, and on focus we
 // restore to that width — so the app respects whatever width the user or
 // window manager chose instead of snapping to a hard-coded value.
-$effect(() => {
-    let unlisten: (() => void) | null = null;
-    const COLLAPSED_WIDTH = 84;
-    // Logical px. Seeded with a sensible default and overwritten with the real
-    // width whenever the window loses focus.
-    let expandedWidth = 900;
+const COLLAPSED_WIDTH = 84;
+// Logical px. Seeded with a sensible default and overwritten with the real
+// width whenever the window loses focus.
+let expandedWidth = 900;
 
-    (async () => {
-        const appWindow = getCurrentWebviewWindow();
-        unlisten = await appWindow.onFocusChanged(async (event) => {
-            const focused = event.payload;
-            // outerSize() is in physical pixels; convert to logical so setSize
-            // (which takes logical) is stable across repeated resizes on HiDPI.
-            const factor = await appWindow.scaleFactor();
-            const size = (await appWindow.outerSize()).toLogical(factor);
-            if (focused) {
-                showDetailPanel = true;
-                appWindow.setSize(new LogicalSize(expandedWidth, size.height));
-            } else {
-                // Capture the current width before collapsing so we can restore it.
-                expandedWidth = size.width;
-                showDetailPanel = false;
-                appWindow.setSize(new LogicalSize(COLLAPSED_WIDTH, size.height));
-            }
-        });
-    })();
-
-    return () => {
-        if (unlisten) unlisten();
-    };
-});
+windowSubscription((appWindow) =>
+    appWindow.onFocusChanged(async (event) => {
+        const focused = event.payload;
+        // outerSize() is in physical pixels; convert to logical so setSize
+        // (which takes logical) is stable across repeated resizes on HiDPI.
+        const factor = await appWindow.scaleFactor();
+        const size = (await appWindow.outerSize()).toLogical(factor);
+        if (focused) {
+            showDetailPanel = true;
+            appWindow.setSize(new LogicalSize(expandedWidth, size.height));
+        } else {
+            // Capture the current width before collapsing so we can restore it.
+            expandedWidth = size.width;
+            showDetailPanel = false;
+            appWindow.setSize(new LogicalSize(COLLAPSED_WIDTH, size.height));
+        }
+    }),
+);
 
 // Listen for the backend's request to show the settings panel.
-$effect(() => {
-    let unlisten: (() => void) | null = null;
-
-    (async () => {
-        const appWindow = getCurrentWebviewWindow();
-        unlisten = await appWindow.listen("show-settings", () => {
-            showSettings = true;
-        });
-    })();
-
-    return () => {
-        if (unlisten) unlisten();
-    };
-});
+windowSubscription((appWindow) =>
+    appWindow.listen("show-settings", () => {
+        showSettings = true;
+    }),
+);
 
 // Refresh immediately when the backend changes context visibility
 // (e.g. via global shortcuts) instead of waiting for the periodic poll.
-$effect(() => {
-    let unlisten: (() => void) | null = null;
-
-    (async () => {
-        const appWindow = getCurrentWebviewWindow();
-        unlisten = await appWindow.listen("contexts-changed", () => {
-            refresh();
-        });
-    })();
-
-    return () => {
-        if (unlisten) unlisten();
-    };
-});
+windowSubscription((appWindow) => appWindow.listen("contexts-changed", () => refresh()));
 
 const mainContext = $derived(appData?.contexts.find((c) => c.is_main) ?? null);
 // Two-tier sidebar order: shortcut-assigned contexts first (auto-ordered by

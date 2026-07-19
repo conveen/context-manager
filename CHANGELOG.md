@@ -28,6 +28,11 @@ How to cut a release:
 
 - Drag-and-drop reorder Contexts in the sidebar. Contexts with assigned shortcuts are pinned to the top, automatically ordered first, and cannot be re-ordered without changing shortcuts. Remaining (unassigned) Contexts can be freely re-ordered. ([#48](https://github.com/conveen/context-manager/pull/48))
 
+### Changed
+
+- Replaced the per-window "original position" hidden marker with a plain `hidden` flag — hiding a window no longer reads its position on macOS, since nothing ever restored from it. Existing saved state loads unchanged; a window that was hidden at upgrade time loses its marker once and stays minimized until shown manually. ([#70](https://github.com/conveen/context-manager/pull/70))
+- Internal cleanup: deduplicated the backend's window-state propagation, z-order capture, and membership show/hide reconciliation, collapsed the hotkey digit dispatch, merged the platform menu-setup variants, removed a dead line in the persistence saver, extracted the frontend's repeated window-event listener boilerplate (also fixing a listener leak when a component tore down before its subscription resolved) and Settings save handlers, and removed the unused or Rust-only command API surface (`get_settings`, `hide_all`, `open_settings`, `open_main_window`). ([#70](https://github.com/conveen/context-manager/pull/70))
+
 ### Fixed
 
 - Hiding a Context no longer occasionally drops one of its windows from tracking when the background window poll runs at the same moment. ([#38](https://github.com/conveen/context-manager/pull/38))

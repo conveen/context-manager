@@ -14,36 +14,34 @@ mod wm;
 
 use state::AppState;
 
-/// Sets up the application menu with platform-specific Settings item.
-#[cfg(target_os = "macos")]
+/// Sets up the application menu with a Settings item, under the
+/// platform-conventional submenu ("App" with Cmd accelerators on macOS,
+/// "File" with Ctrl accelerators on Windows). No-op on other platforms.
 fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
-    let settings = MenuItemBuilder::with_id("settings", "Settings").accelerator("Cmd+,").build(app)?;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = app;
+        Ok(())
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        #[cfg(target_os = "macos")]
+        const SUBMENU_TITLE: &str = "App";
+        #[cfg(target_os = "macos")]
+        const MODIFIER: &str = "Cmd";
+        #[cfg(target_os = "windows")]
+        const SUBMENU_TITLE: &str = "File";
+        #[cfg(target_os = "windows")]
+        const MODIFIER: &str = "Ctrl";
 
-    let quit = MenuItemBuilder::with_id("quit", "Quit").accelerator("Cmd+Q").build(app)?;
-
-    let app_submenu = Submenu::with_items(app, "App", true, &[&settings, &quit])?;
-
-    let menu = Menu::with_items(app, &[&app_submenu])?;
-    app.set_menu(menu)?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn setup_app_menu(app: &tauri::App) -> tauri::Result<()> {
-    let settings = MenuItemBuilder::with_id("settings", "Settings").accelerator("Ctrl+,").build(app)?;
-
-    let quit = MenuItemBuilder::with_id("quit", "Quit").accelerator("Ctrl+Q").build(app)?;
-
-    let file_submenu = Submenu::with_items(app, "File", true, &[&settings, &quit])?;
-
-    let menu = Menu::with_items(app, &[&file_submenu])?;
-    app.set_menu(menu)?;
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn setup_app_menu(_app: &tauri::App) -> tauri::Result<()> {
-    Ok(())
+        let settings =
+            MenuItemBuilder::with_id("settings", "Settings").accelerator(format!("{MODIFIER}+,")).build(app)?;
+        let quit = MenuItemBuilder::with_id("quit", "Quit").accelerator(format!("{MODIFIER}+Q")).build(app)?;
+        let submenu = Submenu::with_items(app, SUBMENU_TITLE, true, &[&settings, &quit])?;
+        let menu = Menu::with_items(app, &[&submenu])?;
+        app.set_menu(menu)?;
+        Ok(())
+    }
 }
 
 /// Sets up the system tray icon with menu.
@@ -56,15 +54,8 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let app_handle = app.handle().clone();
     let mut builder =
         TrayIconBuilder::with_id("main-tray").menu(&menu).on_menu_event(move |_app, event| match event.id().as_ref() {
-            "open-main" => {
-                let app = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    commands::open_main_window(app);
-                });
-            },
-            "quit" => {
-                app_handle.exit(0);
-            },
+            "open-main" => commands::open_main_window(app_handle.clone()),
+            "quit" => app_handle.exit(0),
             _ => {},
         });
 
@@ -148,10 +139,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.on_menu_event(move |_app, event| {
                 if event.id().as_ref() == "settings" {
-                    let app = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let _ = commands::open_settings(app);
-                    });
+                    let _ = commands::open_settings(app_handle.clone());
                 }
             });
 
@@ -168,11 +156,7 @@ pub fn run() {
             commands::remove_window_from_context,
             commands::show_context,
             commands::hide_context,
-            commands::hide_all,
-            commands::open_main_window,
-            commands::get_settings,
             commands::update_settings,
-            commands::open_settings,
             #[cfg(debug_assertions)]
             commands::open_devtools,
         ])
