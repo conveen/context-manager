@@ -45,6 +45,10 @@ How to cut a release:
 - On Windows, hiding a Context no longer permanently drops its windows. Hidden windows are now correctly remembered as hidden, survive the background poll, and can be shown again. ([#67](https://github.com/conveen/context-manager/pull/67))
 - Contexts created while Single Context Mode is enabled now start hidden, so the active Context remains the only visible one instead of two Contexts becoming visible at once. ([#68](https://github.com/conveen/context-manager/pull/68))
 
+### Removed
+
+- Removed the "Launch at Login" feature. The toggle never actually registered the app with the OS login items so it didn't work, and the feature isn't necessary as of now. It may be reintroduced in a later version. ([#72](https://github.com/conveen/context-manager/pull/72))
+
 ## [v0.1.0] - 2026-07-08
 
 ### Added

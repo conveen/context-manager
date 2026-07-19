@@ -185,7 +185,6 @@ Writes are debounced (250ms) after any state change to avoid thrashing.
 | Meta key | Enum (Ctrl+Alt, Cmd+Opt, etc.) | Ctrl+Alt |
 | Single Context Mode | bool | false |
 | Single Context (which Context is force-shown when the mode is enabled) | Context id (`None` → Main) | Main |
-| Launch at login | bool | false |
 
 ## Error Handling
 
@@ -214,5 +213,5 @@ Writes are debounced (250ms) after any state change to avoid thrashing.
 4. **Context data model** — CRUD for Contexts, window membership, visibility logic
 5. **Context Manager UI** — sidebar + detail panel, drag-and-drop, available windows list
 6. **Tray menu** — menu bar / system tray with "Open Context Manager" and "Quit"
-7. **Settings** — meta key config, single context mode, launch at login
+7. **Settings** — meta key config, single context mode
 8. **Polish** — thumbnails (auto-refresh on Context change), error handling, accessibility permissions onboarding

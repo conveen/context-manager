@@ -152,32 +152,6 @@ $effect(() => {
                 </p>
             </div>
 
-            <!-- Launch at Login -->
-            <div class="setting-group">
-                <div class="setting-header">
-                    <h3>Launch at Login</h3>
-                    <p class="description">Start automatically when you log in</p>
-                </div>
-                <label class="toggle-wrapper">
-                    <input
-                        type="checkbox"
-                        checked={settings.launch_at_login}
-                        disabled={saving}
-                        onchange={(e) => saveField({ launch_at_login: e.currentTarget.checked })}
-                    />
-                    <span class="toggle-box"></span>
-                    <span class="toggle-text">
-                        {#if settings.launch_at_login}
-                            Enabled
-                        {:else}
-                            Disabled
-                        {/if}
-                    </span>
-                </label>
-                <p class="detail-text">
-                    Keep Context Manager running in the background at all times.
-                </p>
-            </div>
         </div>
     {/if}
 </div>
