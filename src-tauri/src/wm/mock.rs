@@ -48,11 +48,27 @@ struct MockState {
 
 thread_local! {
     static STATE: RefCell<MockState> = RefCell::new(MockState::default());
+    // Held separately from MockState: a boxed closure has no Default, and the
+    // hook must be taken out while it runs so it can call back into the mock
+    // (set_windows/enumerate) without a double borrow.
+    static ON_HIDE: RefCell<Option<Box<dyn FnMut(u64)>>> = const { RefCell::new(None) };
 }
 
-/// Clears the scripted windows, failure sets, and the call log.
+/// Clears the scripted windows, failure sets, the call log, and the mid-hide
+/// hook.
 pub fn reset() {
     STATE.with(|s| *s.borrow_mut() = MockState::default());
+    ON_HIDE.with(|h| *h.borrow_mut() = None);
+}
+
+/// Installs a hook that runs from inside every successful [`hide_window`]
+/// call, after the OS-level hide "happened" (the window would no longer be
+/// enumerable) but before the caller's write-back runs — the exact gap the
+/// background poll can race into. Tests use it to fire `update_windows`
+/// mid-hide deterministically. The hook is removed while it runs (no
+/// reentrancy) and reinstalled afterwards; [`reset`] clears it.
+pub fn set_on_hide(hook: impl FnMut(u64) + 'static) {
+    ON_HIDE.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
 }
 
 /// Scripts the set of "live" windows the next [`enumerate`] calls return.
@@ -96,7 +112,9 @@ pub fn enumerate(_our_pid: u32) -> Vec<WindowInfo> {
 }
 
 /// Mirrors the real `hide_window` contract: records the call, then either
-/// fails (marker untouched) or sets the `hidden` marker.
+/// fails (marker untouched) or sets the `hidden` marker. On success the
+/// [`set_on_hide`] hook, if any, runs before returning — i.e. before the
+/// caller's write-back.
 pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
     let fail = STATE.with(|s| {
         let mut state = s.borrow_mut();
@@ -107,6 +125,18 @@ pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
         return Err(format!("mock: hide_window({}) scripted to fail", window.platform_id));
     }
     window.hidden = true;
+    // Run the mid-hide hook outside any STATE borrow; it may call back into
+    // the mock. Taken out for the duration so it can't recurse, and only
+    // reinstalled if the hook didn't replace itself.
+    if let Some(mut hook) = ON_HIDE.with(|h| h.borrow_mut().take()) {
+        hook(window.platform_id);
+        ON_HIDE.with(|h| {
+            let mut slot = h.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(hook);
+            }
+        });
+    }
     Ok(())
 }
 

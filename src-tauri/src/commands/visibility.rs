@@ -153,3 +153,282 @@ pub fn handle_shortcut<R: tauri::Runtime>(
     // than waiting for the next periodic poll.
     let _ = app.emit(crate::events::CONTEXTS_CHANGED, ());
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use tauri::Listener;
+    use tauri_plugin_global_shortcut::Shortcut;
+
+    use super::*;
+    use crate::state::{AppData, Context};
+    use crate::test_util::{app_data, ctx, main_ctx, mock_app, win};
+    use crate::wm::mock::{self, Call};
+
+    fn ctx_by<'a>(data: &'a AppData, id: &str) -> &'a Context {
+        data.contexts.iter().find(|c| c.id == id).unwrap()
+    }
+
+    fn win_in<'a>(data: &'a AppData, ctx_id: &str, platform_id: u64) -> &'a crate::state::WindowRef {
+        ctx_by(data, ctx_id).windows.iter().find(|w| w.platform_id == platform_id).unwrap()
+    }
+
+    #[test]
+    fn hiding_hides_only_windows_with_no_other_visible_context() {
+        // main (visible) shares window 1 with a; a exclusively holds window 2.
+        let (app, rx) = mock_app(app_data(vec![
+            main_ctx("m", true, vec![win(1, false)]),
+            ctx("a", true, vec![win(1, false), win(2, false)]),
+        ]));
+        hide_context(app.handle().clone(), "a".into()).unwrap();
+
+        assert_eq!(mock::calls(), vec![Call::Hide(2)], "the shared window must not be hidden");
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(!ctx_by(&data, "a").visible);
+        assert!(win_in(&data, "a", 2).hidden);
+        // The shared window stays visible in every copy.
+        assert!(!win_in(&data, "a", 1).hidden);
+        assert!(!win_in(&data, "m", 1).hidden);
+        drop(data);
+        assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn hidden_marker_is_propagated_to_every_copy_of_the_window() {
+        // Window 2 lives in both a and b; b is already hidden, so hiding a
+        // hides window 2 — and b's copy must pick up the marker too.
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", true, vec![]),
+            ctx("a", true, vec![win(2, false)]),
+            ctx("b", false, vec![win(2, false)]),
+        ]));
+        hide_context(app.handle().clone(), "a".into()).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(win_in(&data, "a", 2).hidden);
+        assert!(win_in(&data, "b", 2).hidden);
+    }
+
+    #[test]
+    fn failed_hide_reverts_the_optimistic_marker() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![win(2, false)])]));
+        mock::fail_hide(2);
+        hide_context(app.handle().clone(), "a".into()).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(!win_in(&data, "a", 2).hidden, "marker must be reverted after a failed hide");
+        assert!(!ctx_by(&data, "a").visible, "the Context is still marked hidden");
+    }
+
+    #[test]
+    fn showing_shows_hidden_windows_and_clears_markers_on_all_copies() {
+        let (app, _rx) =
+            mock_app(app_data(vec![main_ctx("m", false, vec![win(1, true)]), ctx("a", false, vec![win(1, true)])]));
+        show_context(app.handle().clone(), "a".into()).unwrap();
+
+        // On macOS the frontmost shown window is additionally raised, even
+        // when no stacking rank was captured for it.
+        #[cfg(target_os = "macos")]
+        assert_eq!(mock::calls(), vec![Call::Show(1), Call::Raise(1)]);
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(mock::calls(), vec![Call::Show(1)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(ctx_by(&data, "a").visible);
+        assert!(!win_in(&data, "a", 1).hidden);
+        assert!(!win_in(&data, "m", 1).hidden, "marker cleared on every copy");
+        assert!(!ctx_by(&data, "m").visible, "other Contexts' visibility untouched");
+    }
+
+    #[test]
+    fn unknown_context_errors() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![])]));
+        assert!(show_context(app.handle().clone(), "nope".into()).is_err());
+        assert!(hide_context(app.handle().clone(), "nope".into()).is_err());
+    }
+
+    #[test]
+    fn single_context_mode_show_hides_all_visible_siblings() {
+        let mut data = app_data(vec![
+            main_ctx("m", true, vec![win(1, false)]),
+            ctx("a", true, vec![win(2, false)]),
+            ctx("b", false, vec![win(3, true)]),
+        ]);
+        data.settings.single_context_mode = true;
+        let (app, _rx) = mock_app(data);
+        show_context(app.handle().clone(), "b".into()).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(ctx_by(&data, "b").visible);
+        assert!(!ctx_by(&data, "m").visible);
+        assert!(!ctx_by(&data, "a").visible);
+        assert!(win_in(&data, "m", 1).hidden);
+        assert!(win_in(&data, "a", 2).hidden);
+        assert!(!win_in(&data, "b", 3).hidden);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn show_unminimizes_back_to_front_and_raises_the_previously_frontmost_window() {
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", false, vec![]),
+            ctx("a", true, vec![win(1, false), win(2, false), win(3, false)]),
+        ]));
+        // Enumeration order is front-to-back: window 2 is frontmost.
+        mock::set_windows(vec![
+            mock::mock_win(2, "App2", "Win2"),
+            mock::mock_win(1, "App1", "Win1"),
+            mock::mock_win(3, "App3", "Win3"),
+        ]);
+        hide_context(app.handle().clone(), "a".into()).unwrap();
+        show_context(app.handle().clone(), "a".into()).unwrap();
+
+        assert_eq!(
+            mock::calls(),
+            vec![
+                Call::Hide(1),
+                Call::Hide(2),
+                Call::Hide(3),
+                // Back-to-front: deepest window first, frontmost last…
+                Call::Show(3),
+                Call::Show(1),
+                Call::Show(2),
+                // …and the previously-frontmost window is explicitly raised.
+                Call::Raise(2),
+            ]
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn show_keeps_the_stored_window_order_without_raising() {
+        // Off macOS the OS preserves z-order natively; windows are shown in
+        // stored order and nothing is raised.
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", false, vec![]),
+            ctx("a", true, vec![win(1, false), win(2, false), win(3, false)]),
+        ]));
+        hide_context(app.handle().clone(), "a".into()).unwrap();
+        show_context(app.handle().clone(), "a".into()).unwrap();
+
+        assert_eq!(
+            mock::calls(),
+            vec![Call::Hide(1), Call::Hide(2), Call::Hide(3), Call::Show(1), Call::Show(2), Call::Show(3)]
+        );
+    }
+
+    #[test]
+    fn shortcut_toggles_the_assigned_context_and_emits() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![win(2, false)])]);
+        data.contexts[1].shortcut_index = Some(1);
+        let (app, _rx) = mock_app(data);
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        app.listen_any(crate::events::CONTEXTS_CHANGED, move |_| {
+            h.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let digit1 = Shortcut::new(None, Code::Digit1);
+        handle_shortcut(app.handle(), &digit1); // visible → hide
+        {
+            let state = app.state::<AppState>();
+            let data = state.data.lock().unwrap();
+            assert!(!ctx_by(&data, "a").visible);
+        }
+        handle_shortcut(app.handle(), &digit1); // hidden → show
+        {
+            let state = app.state::<AppState>();
+            let data = state.data.lock().unwrap();
+            assert!(ctx_by(&data, "a").visible);
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "each dispatch notifies the frontend");
+    }
+
+    #[test]
+    fn shortcut_h_hides_every_visible_context() {
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", true, vec![win(1, false)]),
+            ctx("a", true, vec![win(2, false)]),
+            ctx("b", false, vec![]),
+        ]));
+        handle_shortcut(app.handle(), &Shortcut::new(None, Code::KeyH));
+
+        assert_eq!(mock::calls(), vec![Call::Hide(1), Call::Hide(2)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts.iter().all(|c| !c.visible));
+    }
+
+    #[test]
+    fn unassigned_digit_and_unmapped_key_change_nothing() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)])]));
+        handle_shortcut(app.handle(), &Shortcut::new(None, Code::Digit5));
+        handle_shortcut(app.handle(), &Shortcut::new(None, Code::KeyA));
+
+        assert!(mock::calls().is_empty());
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts[0].visible);
+    }
+    // ── Poll-interleaving races (the #19/#43/#59 class) ───────────────────
+    // The bug: the background poll fires while an OS hide is in flight — the
+    // window is already gone from the live enumeration, but the hide's
+    // write-back hasn't run. Without the optimistic hidden marker set under
+    // the Phase-1 lock, the poll saw a not-hidden, non-enumerable window and
+    // dropped it from tracking. The mock's on-hide hook reproduces that
+    // interleaving deterministically.
+
+    #[test]
+    fn poll_firing_mid_hide_does_not_drop_the_window() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![win(2, false)])]));
+        mock::set_windows(vec![mock::mock_win(2, "App2", "Win2")]);
+        let handle = app.handle().clone();
+        mock::set_on_hide(move |_| {
+            // The just-minimized window disappears from the live enumeration…
+            mock::set_windows(vec![]);
+            // …and the poll ticks before the hide's write-back runs.
+            crate::wm::update_windows(&handle);
+        });
+        hide_context(app.handle().clone(), "a".into()).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        let a = ctx_by(&data, "a");
+        assert_eq!(a.windows.len(), 1, "the mid-hide poll must not drop the window (#19)");
+        assert!(a.windows[0].hidden);
+    }
+
+    #[test]
+    fn poll_firing_during_hide_all_keeps_every_window() {
+        // #59: <meta>+H hides every Context in sequence; each hide is a
+        // separate poll-race window. The hook removes each window from the
+        // scripted enumeration as it is minimized, polling every time.
+        let (app, _rx) =
+            mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![win(2, false)])]));
+        mock::set_windows(vec![mock::mock_win(1, "App1", "Win1"), mock::mock_win(2, "App2", "Win2")]);
+        let handle = app.handle().clone();
+        let mut live: std::collections::HashSet<u64> = [1, 2].into();
+        mock::set_on_hide(move |id| {
+            live.remove(&id);
+            mock::set_windows(
+                live.iter().map(|&i| mock::mock_win(i, &format!("App{i}"), &format!("Win{i}"))).collect(),
+            );
+            crate::wm::update_windows(&handle);
+        });
+        handle_shortcut(app.handle(), &Shortcut::new(None, Code::KeyH));
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert_eq!(ctx_by(&data, "m").windows.len(), 1, "window 1 must survive the mid-hide polls (#59)");
+        assert_eq!(ctx_by(&data, "a").windows.len(), 1, "window 2 must survive the mid-hide polls (#59)");
+        assert!(win_in(&data, "m", 1).hidden);
+        assert!(win_in(&data, "a", 2).hidden);
+        assert!(data.contexts.iter().all(|c| !c.visible));
+    }
+}

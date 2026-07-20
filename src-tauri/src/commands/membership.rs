@@ -219,3 +219,195 @@ pub fn remove_window_from_context<R: tauri::Runtime>(
     let _ = state.save_tx.send(data.clone());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use tauri::Manager;
+
+    use super::*;
+    use crate::state::AppData;
+    use crate::test_util::{app_data, ctx, main_ctx, mock_app, win};
+    use crate::wm::mock::{self, Call};
+
+    fn windows_of<'a>(data: &'a AppData, ctx_id: &str) -> Vec<u64> {
+        data.contexts.iter().find(|c| c.id == ctx_id).unwrap().windows.iter().map(|w| w.platform_id).collect()
+    }
+
+    #[test]
+    fn adding_moves_the_window_out_of_main_by_default() {
+        let (app, rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![])]));
+        add_window_to_context(app.handle().clone(), "a".into(), 1, false).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert_eq!(windows_of(&data, "a"), vec![1]);
+        assert!(windows_of(&data, "m").is_empty(), "a move drops the window from Main");
+        assert!(mock::calls().is_empty(), "both Contexts visible: no OS calls");
+        drop(data);
+        assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn adding_with_copy_keeps_the_window_in_main() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![])]));
+        add_window_to_context(app.handle().clone(), "a".into(), 1, true).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert_eq!(windows_of(&data, "a"), vec![1]);
+        assert_eq!(windows_of(&data, "m"), vec![1], "a copy stays in Main");
+    }
+
+    #[test]
+    fn adding_is_idempotent_and_validates_inputs() {
+        let (app, rx) =
+            mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![win(1, false)])]));
+        // Already a member: Ok without touching anything.
+        add_window_to_context(app.handle().clone(), "a".into(), 1, false).unwrap();
+        assert!(!rx.has_changed().unwrap());
+        // Unknown Context / untracked window.
+        assert!(add_window_to_context(app.handle().clone(), "ghost".into(), 1, false).is_err());
+        assert!(add_window_to_context(app.handle().clone(), "a".into(), 99, false).is_err());
+    }
+
+    #[test]
+    fn adding_a_hidden_window_to_a_visible_context_shows_it() {
+        // Window 2 is hidden inside hidden Context a; adding it to visible
+        // main must show it and clear the marker on every copy.
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", false, vec![win(2, true)])]));
+        add_window_to_context(app.handle().clone(), "m".into(), 2, false).unwrap();
+
+        assert_eq!(mock::calls(), vec![Call::Show(2)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts.iter().flat_map(|c| c.windows.iter()).all(|w| !w.hidden));
+    }
+
+    #[test]
+    fn moving_a_window_into_a_hidden_context_hides_it() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", false, vec![])]));
+        add_window_to_context(app.handle().clone(), "a".into(), 1, false).unwrap();
+
+        assert_eq!(mock::calls(), vec![Call::Hide(1)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts.iter().find(|c| c.id == "a").unwrap().windows[0].hidden);
+        assert!(windows_of(&data, "m").is_empty());
+    }
+
+    #[test]
+    fn copying_a_window_into_a_hidden_context_leaves_it_visible() {
+        // With copy, the window remains in visible Main, so it must not be hidden.
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", false, vec![])]));
+        add_window_to_context(app.handle().clone(), "a".into(), 1, true).unwrap();
+
+        assert!(mock::calls().is_empty());
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts.iter().flat_map(|c| c.windows.iter()).all(|w| !w.hidden));
+    }
+
+    #[test]
+    fn failed_hide_on_move_reverts_the_optimistic_marker() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", false, vec![])]));
+        mock::fail_hide(1);
+        add_window_to_context(app.handle().clone(), "a".into(), 1, false).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        // Membership still applied, but the marker reflects the failed hide.
+        assert_eq!(windows_of(&data, "a"), vec![1]);
+        assert!(!data.contexts.iter().find(|c| c.id == "a").unwrap().windows[0].hidden);
+    }
+
+    #[test]
+    fn removing_from_the_last_non_main_context_returns_the_window_to_main() {
+        // Window 2 is hidden in hidden Context a and belongs nowhere else;
+        // removal must re-add it to (visible) Main and show it.
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![]), ctx("a", false, vec![win(2, true)])]));
+        remove_window_from_context(app.handle().clone(), "a".into(), 2).unwrap();
+
+        assert_eq!(mock::calls(), vec![Call::Show(2)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(windows_of(&data, "a").is_empty());
+        assert_eq!(windows_of(&data, "m"), vec![2]);
+        assert!(!data.contexts.iter().find(|c| c.id == "m").unwrap().windows[0].hidden);
+    }
+
+    #[test]
+    fn removing_a_window_that_remains_visible_elsewhere_touches_nothing() {
+        let (app, _rx) =
+            mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![win(1, false)])]));
+        remove_window_from_context(app.handle().clone(), "a".into(), 1).unwrap();
+
+        assert!(mock::calls().is_empty());
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(windows_of(&data, "a").is_empty());
+        assert_eq!(windows_of(&data, "m"), vec![1]);
+    }
+
+    #[test]
+    fn removing_a_windows_last_visible_context_hides_it() {
+        // Window 1 is visible in a (visible) and also tracked in b (hidden).
+        // Removing it from a leaves only hidden Contexts → it must be hidden.
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", false, vec![]),
+            ctx("a", true, vec![win(1, false)]),
+            ctx("b", false, vec![win(1, false)]),
+        ]));
+        remove_window_from_context(app.handle().clone(), "a".into(), 1).unwrap();
+
+        assert_eq!(mock::calls(), vec![Call::Hide(1)]);
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts.iter().find(|c| c.id == "b").unwrap().windows[0].hidden);
+    }
+
+    #[test]
+    fn removing_from_main_with_no_other_context_leaves_physical_state_alone() {
+        // The poll will re-add the (still live) window; nothing is hidden/shown.
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)])]));
+        remove_window_from_context(app.handle().clone(), "m".into(), 1).unwrap();
+
+        assert!(mock::calls().is_empty());
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(data.contexts.iter().all(|c| c.windows.is_empty()));
+    }
+
+    #[test]
+    fn removing_validates_the_context_and_tolerates_non_members() {
+        let (app, _rx) = mock_app(app_data(vec![main_ctx("m", true, vec![win(1, false)]), ctx("a", true, vec![])]));
+        assert!(remove_window_from_context(app.handle().clone(), "ghost".into(), 1).is_err());
+        assert!(remove_window_from_context(app.handle().clone(), "a".into(), 99).is_err(), "untracked window");
+    }
+    #[test]
+    fn poll_firing_mid_hide_during_a_removal_does_not_drop_the_window() {
+        // The #43 poll-interleaving race: removing a window's last visible
+        // Context hides it; the poll ticking between the OS hide and the
+        // write-back (reproduced by the mock's on-hide hook) must not drop it
+        // from the hidden Context that still tracks it — without the
+        // optimistic marker, the poll saw a not-hidden, non-enumerable window
+        // and removed it, so the write-back had nothing to return it to.
+        let (app, _rx) = mock_app(app_data(vec![
+            main_ctx("m", false, vec![]),
+            ctx("a", true, vec![win(1, false)]),
+            ctx("b", false, vec![win(1, false)]),
+        ]));
+        mock::set_windows(vec![mock::mock_win(1, "App1", "Win1")]);
+        let handle = app.handle().clone();
+        mock::set_on_hide(move |_| {
+            mock::set_windows(vec![]);
+            crate::wm::update_windows(&handle);
+        });
+        remove_window_from_context(app.handle().clone(), "a".into(), 1).unwrap();
+
+        let state = app.state::<AppState>();
+        let data = state.data.lock().unwrap();
+        assert!(windows_of(&data, "a").is_empty());
+        assert_eq!(windows_of(&data, "b"), vec![1], "the mid-hide poll must not drop the window (#43)");
+        assert!(data.contexts.iter().find(|c| c.id == "b").unwrap().windows[0].hidden);
+    }
+}
