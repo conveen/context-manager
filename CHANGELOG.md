@@ -24,6 +24,8 @@ How to cut a release:
 
 ## [Unreleased]
 
+## [v0.1.1] - 2026-07-20
+
 ### Added
 
 - Drag-and-drop reorder Contexts in the sidebar. Contexts with assigned shortcuts are pinned to the top, automatically ordered first, and cannot be re-ordered without changing shortcuts. Remaining (unassigned) Contexts can be freely re-ordered. ([#48](https://github.com/conveen/context-manager/pull/48))
