@@ -211,7 +211,7 @@ Writes are debounced (250ms) after any state change to avoid thrashing.
 | Frontend unit | `toast.svelte.ts` timers, `color.ts`, `api.ts` command-name/arg-casing mapping | Vitest (fake timers, `mockIPC`) | CI |
 | Frontend component | Svelte 5 components: rendering, handlers, event listeners, keyboard shortcuts | Vitest + `@testing-library/svelte` + jsdom; Tauri APIs replaced by module mocks | CI |
 | Cross-layer contract | Backend⇄frontend event names and the `AppData` JSON shape, pinned by shared fixtures asserted from **both** suites | `cargo test` + Vitest against committed fixtures | CI |
-| Manual checklist | The OS-dependent behaviors listed under "Not covered" | Short checklist doc, run before each release | Human, real desktop |
+| Manual checklist | The OS-dependent behaviors listed under "Not covered" | [docs/MANUAL_TESTING.md](docs/MANUAL_TESTING.md), run before each release | Human, real desktop |
 
 ### Enabling refactors (small, no behavior change)
 
