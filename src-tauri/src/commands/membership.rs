@@ -33,8 +33,8 @@ use crate::state::AppState;
 /// # Errors
 /// Returns `Err` if the Context or the window (by `platform_id`) is not found.
 #[tauri::command]
-pub fn add_window_to_context(
-    app: tauri::AppHandle,
+pub fn add_window_to_context<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     context_id: String,
     platform_id: u64,
     copy: bool,
@@ -131,7 +131,11 @@ pub fn add_window_to_context(
 /// # Errors
 /// Returns `Err` if the Context does not exist.
 #[tauri::command]
-pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, platform_id: u64) -> Result<(), String> {
+pub fn remove_window_from_context<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    context_id: String,
+    platform_id: u64,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
 
     // Collect info before OS call: window's current state and its contexts after removal.

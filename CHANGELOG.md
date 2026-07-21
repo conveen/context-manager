@@ -29,6 +29,7 @@ How to cut a release:
 ### Added
 
 - Drag-and-drop reorder Contexts in the sidebar. Contexts with assigned shortcuts are pinned to the top, automatically ordered first, and cannot be re-ordered without changing shortcuts. Remaining (unassigned) Contexts can be freely re-ordered. ([#48](https://github.com/conveen/context-manager/pull/48))
+- Added an automated testing harness (strategy documented in DESIGN.md's Testing section): `cargo test` with Tauri's MockRuntime and scripted OS-window/hotkey mocks for the backend, Vitest + Testing Library for the frontend, both wired into `./run.sh -l test` and CI. Internal enabling refactors, with no behavior change: commands are generic over the Tauri runtime, the platform window/hotkey layers gained `cfg(test)` seams, persistence works on paths, and backend→frontend event names are shared constants. ([#76](https://github.com/conveen/context-manager/pull/76))
 
 ### Changed
 

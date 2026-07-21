@@ -121,7 +121,7 @@ fn reconcile_window_visibility(win_clone: &mut WindowRef, should_show: bool, sho
 /// minimized (absent from the live enumeration) yet still marked not-hidden,
 /// and drop it from tracking entirely. Phase 3 confirms the marker on
 /// success, or reverts it on failure.
-fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
+fn do_hide_context_windows<R: tauri::Runtime>(app: &tauri::AppHandle<R>, ctx_id: &str) {
     let state = app.state::<AppState>();
 
     // Capture the current front-to-back stacking order (macOS) before minimizing,
@@ -205,7 +205,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
 /// Mirrors the three-phase structure of `do_hide_context_windows`:
 /// collect hidden windows under lock → call `wm::show_window` outside lock
 /// → clear the hidden marker on all copies and mark visible under lock.
-fn do_show_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
+fn do_show_context_windows<R: tauri::Runtime>(app: &tauri::AppHandle<R>, ctx_id: &str) {
     let state = app.state::<AppState>();
 
     // Phase 1

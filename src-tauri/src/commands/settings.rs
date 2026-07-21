@@ -22,7 +22,7 @@ use crate::state::{AppState, Settings};
 /// application), the previous modifier is restored — in settings and in the OS
 /// registration — and an error is returned.
 #[tauri::command]
-pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+pub fn update_settings<R: tauri::Runtime>(app: tauri::AppHandle<R>, settings: Settings) -> Result<(), String> {
     // Store settings and decide whether to enforce single-context visibility,
     // all under a brief lock. `visibility::show` (which re-acquires the lock)
     // is called only after the lock is released.
@@ -70,7 +70,7 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
     if let Some(id) = enforce_id {
         visibility::show(&app, &id)?;
         // Nudge the frontend to refresh visibility indicators immediately.
-        let _ = app.emit("contexts-changed", ());
+        let _ = app.emit(crate::events::CONTEXTS_CHANGED, ());
     }
     Ok(())
 }
@@ -79,11 +79,11 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
 /// `show-settings` event so the frontend switches to the settings panel.
 /// Reached only from the application menu's Settings item; deliberately not a
 /// Tauri command — the frontend opens its settings panel directly.
-pub fn open_settings(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn open_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
-        let _ = window.emit("show-settings", ());
+        let _ = window.emit(crate::events::SHOW_SETTINGS, ());
     }
     Ok(())
 }
@@ -91,7 +91,7 @@ pub fn open_settings(app: &tauri::AppHandle) -> Result<(), String> {
 /// Shows and focuses the main window. Reached only from the tray menu's
 /// "Open Context Manager" item; the frontend runs inside this window, so this
 /// is deliberately not a Tauri command.
-pub fn open_main_window(app: &tauri::AppHandle) {
+pub fn open_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.set_focus();
@@ -101,7 +101,7 @@ pub fn open_main_window(app: &tauri::AppHandle) {
 /// Opens DevTools for the main window (debug builds only).
 #[tauri::command]
 #[cfg(debug_assertions)]
-pub fn open_devtools(app: tauri::AppHandle) {
+pub fn open_devtools<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     if let Some(win) = app.get_webview_window("main") {
         win.open_devtools();
     }

@@ -17,7 +17,7 @@ use crate::state::AppState;
 ///
 /// # Errors
 /// Returns `Err` if the Context does not exist.
-pub(super) fn show(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+pub(super) fn show<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) -> Result<(), String> {
     // Validate existence and collect sibling IDs under a brief lock.
     let siblings_to_hide: Vec<String> = {
         let state = app.state::<AppState>();
@@ -42,7 +42,7 @@ pub(super) fn show(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
 ///
 /// # Errors
 /// Returns `Err` if the Context does not exist.
-fn hide(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+fn hide<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) -> Result<(), String> {
     // Validate existence before delegating.
     {
         let state = app.state::<AppState>();
@@ -61,7 +61,7 @@ fn hide(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
 /// # Errors
 /// Returns `Err` if the Context does not exist.
 #[tauri::command]
-pub fn show_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
+pub fn show_context<R: tauri::Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
     show(&app, &id)
 }
 
@@ -71,7 +71,7 @@ pub fn show_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
 /// # Errors
 /// Returns `Err` if the Context does not exist.
 #[tauri::command]
-pub fn hide_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
+pub fn hide_context<R: tauri::Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
     hide(&app, &id)
 }
 
@@ -83,7 +83,7 @@ pub fn hide_context(app: tauri::AppHandle, id: String) -> Result<(), String> {
 /// each is hidden in turn (each call to `do_hide_context_windows` re-acquires
 /// the lock internally, so windows hidden by an earlier call are not re-hidden
 /// by later calls — the not-`hidden` filter ensures this).
-fn hide_all(app: &tauri::AppHandle) {
+fn hide_all<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let visible_ids: Vec<String> = {
         let state = app.state::<AppState>();
         let data = state.data.lock().unwrap();
@@ -99,7 +99,7 @@ fn hide_all(app: &tauri::AppHandle) {
 ///
 /// The data lock is acquired briefly to read state, then released before
 /// calling `show`/`hide` (which re-acquire it), preventing deadlocks.
-fn toggle_context_by_shortcut(app: &tauri::AppHandle, shortcut_index: u8) {
+fn toggle_context_by_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>, shortcut_index: u8) {
     let (ctx_id, is_visible) = {
         let state = app.state::<AppState>();
         let data = state.data.lock().unwrap();
@@ -138,7 +138,10 @@ fn digit_of(code: Code) -> Option<u8> {
 /// - `<meta>+H` — hide all Contexts.
 ///
 /// Called from the `with_handler` closure in `lib.rs`.
-pub fn handle_shortcut(app: &tauri::AppHandle, shortcut: &tauri_plugin_global_shortcut::Shortcut) {
+pub fn handle_shortcut<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    shortcut: &tauri_plugin_global_shortcut::Shortcut,
+) {
     if shortcut.key == Code::KeyH {
         hide_all(app);
     } else if let Some(n) = digit_of(shortcut.key) {
@@ -148,5 +151,5 @@ pub fn handle_shortcut(app: &tauri::AppHandle, shortcut: &tauri_plugin_global_sh
     }
     // Notify the frontend so visibility indicators update immediately rather
     // than waiting for the next periodic poll.
-    let _ = app.emit("contexts-changed", ());
+    let _ = app.emit(crate::events::CONTEXTS_CHANGED, ());
 }

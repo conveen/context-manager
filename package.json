@@ -10,7 +10,9 @@
         "fmt": "biome format --write src",
         "fmt:check": "biome format src",
         "lint": "biome lint src",
-        "check": "svelte-check"
+        "check": "svelte-check",
+        "test": "vitest run",
+        "test:watch": "vitest"
     },
     "dependencies": {
         "@tauri-apps/api": "^2",
@@ -21,10 +23,13 @@
         "@biomejs/biome": "^2.5",
         "@sveltejs/vite-plugin-svelte": "^6",
         "@tauri-apps/cli": "^2",
+        "@testing-library/svelte": "^5",
+        "jsdom": "^26",
         "svelte": "^5",
         "svelte-check": "^4",
         "typescript": "^5",
-        "vite": "^6"
+        "vite": "^6",
+        "vitest": "^3"
     },
     "allowScripts": {
         "@biomejs/biome@1.9.4": true

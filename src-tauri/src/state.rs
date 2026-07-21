@@ -8,7 +8,7 @@ use tokio::sync::watch;
 /// `hidden` is set while the window is hidden by us and cleared when it is
 /// shown again; both platforms restore geometry natively on show, so no
 /// position needs to be remembered.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WindowRef {
     /// Stable OS-assigned window identifier: CGWindowID on macOS, HWND value on Windows.
     pub platform_id: u64,
@@ -51,7 +51,7 @@ pub struct WindowRef {
 /// - Exactly one `Context` in `AppData::contexts` has `is_main == true`.
 /// - The Main Context always has `shortcut_index == Some(0)`.
 /// - `id` is a UUID v4 string and is unique across all Contexts.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Context {
     /// UUID v4 string uniquely identifying this Context.
     pub id: String,
@@ -90,7 +90,7 @@ pub enum MetaKey {
 }
 
 /// User-configurable application settings.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Settings {
     /// Modifier key prefix used for all Context keyboard shortcuts.
     pub meta_key: MetaKey,
@@ -117,13 +117,15 @@ pub struct Settings {
 ///   windows against the loaded state, removing any stale `WindowRef` entries.
 ///
 /// # Examples
-/// ```no_run
+/// `state` is a private module, so this can't compile as a doctest; the same
+/// invariants are asserted by `tests::default_data_has_only_a_visible_main_context`.
+/// ```ignore
 /// let data = AppData::default();
 /// assert_eq!(data.contexts.len(), 1);
 /// assert!(data.contexts[0].is_main);
 /// assert_eq!(data.contexts[0].shortcut_index, Some(0));
 /// ```
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AppData {
     /// Ordered list of Contexts. Main is always first (`index 0`).
     pub contexts: Vec<Context>,
@@ -173,6 +175,64 @@ impl Default for AppData {
             }],
             settings: Settings { meta_key: MetaKey::CtrlAlt, single_context_mode: false, single_context_id: None },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::{app_data, ctx, main_ctx};
+
+    #[test]
+    fn default_data_has_only_a_visible_main_context() {
+        let data = AppData::default();
+        assert_eq!(data.contexts.len(), 1);
+        let main = &data.contexts[0];
+        assert!(main.is_main);
+        assert!(main.visible);
+        assert_eq!(main.name, "main");
+        assert_eq!(main.shortcut_index, Some(0));
+        assert!(!data.settings.single_context_mode);
+        assert_eq!(data.settings.meta_key, MetaKey::CtrlAlt);
+    }
+
+    #[test]
+    fn normalize_order_renumbers_ties_by_array_position() {
+        // Pre-`order` state: every value defaults to 0; the stable sort must
+        // preserve the existing array order exactly.
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![]), ctx("b", true, vec![])]);
+        for c in &mut data.contexts {
+            c.order = 0;
+        }
+        data.normalize_order();
+        let orders: Vec<u32> = data.contexts.iter().map(|c| c.order).collect();
+        assert_eq!(orders, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn normalize_order_densifies_gaps_without_moving_elements() {
+        let mut data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![]), ctx("b", true, vec![])]);
+        data.contexts[0].order = 7;
+        data.contexts[1].order = 2;
+        data.contexts[2].order = 9;
+        data.normalize_order();
+        // Ranks follow the sorted order values; elements stay in place.
+        let orders: Vec<u32> = data.contexts.iter().map(|c| c.order).collect();
+        assert_eq!(orders, vec![1, 0, 2]);
+        let ids: Vec<&str> = data.contexts.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["m", "a", "b"]);
+        // Idempotent once dense.
+        data.normalize_order();
+        let again: Vec<u32> = data.contexts.iter().map(|c| c.order).collect();
+        assert_eq!(again, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn next_order_is_one_past_the_maximum() {
+        let data = app_data(vec![main_ctx("m", true, vec![]), ctx("a", true, vec![])]);
+        assert_eq!(data.next_order(), 2);
+        let empty = AppData { contexts: vec![], settings: data.settings.clone() };
+        assert_eq!(empty.next_order(), 0);
     }
 }
 

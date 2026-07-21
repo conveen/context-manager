@@ -5,9 +5,15 @@ use tokio::time::Duration;
 
 use crate::state::{AppState, WindowRef};
 
-#[cfg(target_os = "macos")]
+// In test builds the platform modules are not compiled at all; every entry
+// point below routes to the scripted [`mock`] instead. The real OS calls need
+// a live desktop session (and, on macOS, Accessibility + Screen Recording
+// permissions) and are exercised only via the manual checklist.
+#[cfg(all(target_os = "macos", not(test)))]
 mod macos;
-#[cfg(target_os = "windows")]
+#[cfg(test)]
+pub mod mock;
+#[cfg(all(target_os = "windows", not(test)))]
 mod win32;
 
 /// macOS-only: raise a window to the front, restoring it as the top window.
@@ -15,8 +21,10 @@ mod win32;
 /// (like `hide_window`/`show_window`) because it has no meaningful behavior on
 /// other platforms. Used after un-minimizing a Context's windows to reinstate
 /// the window that was frontmost before the Context was hidden.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(test)))]
 pub use macos::raise_window;
+#[cfg(all(target_os = "macos", test))]
+pub use mock::raise_window;
 
 /// A snapshot of a single live OS window captured during enumeration.
 ///
@@ -59,18 +67,25 @@ pub struct WindowInfo {
 /// - Every returned `WindowInfo` has a non-empty `window_title`.
 /// - No returned `WindowInfo` is owned by the process identified by `our_pid`.
 pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
-    #[cfg(target_os = "macos")]
+    #[cfg(test)]
     {
-        macos::enumerate(our_pid)
+        mock::enumerate(our_pid)
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(not(test))]
     {
-        win32::enumerate(our_pid)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = our_pid;
-        vec![]
+        #[cfg(target_os = "macos")]
+        {
+            macos::enumerate(our_pid)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            win32::enumerate(our_pid)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            let _ = our_pid;
+            vec![]
+        }
     }
 }
 
@@ -115,7 +130,7 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 /// On macOS 10.15+, window enumeration requires Screen Recording permission
 /// (System Preferences > Security & Privacy > Screen Recording). Without it,
 /// application windows will not appear in the available windows list.
-pub fn update_windows(app: &tauri::AppHandle) {
+pub fn update_windows<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let our_pid = std::process::id();
     let current = enumerate(our_pid);
 
@@ -199,18 +214,25 @@ pub fn update_windows(app: &tauri::AppHandle) {
 /// Returns an `Err` string if the window cannot be found or the OS call fails
 /// (e.g. Accessibility permission not granted on macOS).
 pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(test)]
     {
-        macos::hide_window(window)
+        mock::hide_window(window)
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(not(test))]
     {
-        win32::hide_window(window)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = window;
-        Err("hide_window is not supported on this platform".to_string())
+        #[cfg(target_os = "macos")]
+        {
+            macos::hide_window(window)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            win32::hide_window(window)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            let _ = window;
+            Err("hide_window is not supported on this platform".to_string())
+        }
     }
 }
 
@@ -229,18 +251,25 @@ pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
 /// # Errors
 /// Returns an `Err` string if the window cannot be found or the OS call fails.
 pub fn show_window(window: &mut WindowRef) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(test)]
     {
-        macos::show_window(window)
+        mock::show_window(window)
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(not(test))]
     {
-        win32::show_window(window)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = window;
-        Err("show_window is not supported on this platform".to_string())
+        #[cfg(target_os = "macos")]
+        {
+            macos::show_window(window)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            win32::show_window(window)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            let _ = window;
+            Err("show_window is not supported on this platform".to_string())
+        }
     }
 }
 
@@ -261,7 +290,7 @@ pub fn show_window(window: &mut WindowRef) -> Result<(), String> {
 /// - Runs indefinitely for the lifetime of the application.
 /// - Each tick calls `update_windows` synchronously before sleeping, so ticks
 ///   do not overlap even if `update_windows` takes longer than the interval.
-pub fn start_poll(app: tauri::AppHandle) {
+pub fn start_poll<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         loop {
             update_windows(&app);
