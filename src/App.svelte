@@ -163,7 +163,7 @@ function closeSettings() {
     {#if showSettings}
         <div class="settings-view">
             <button class="back-btn" onclick={closeSettings} title="Back">← Back</button>
-            <Settings />
+            <Settings contexts={appData?.contexts ?? []} />
         </div>
     {:else}
         {#if import.meta.env.DEV && showDetailPanel}

@@ -102,6 +102,8 @@ When enabled:
 - Showing Context B immediately hides all other currently-visible Contexts (applying the rule above to each).
 - No animation or transition.
 - A **chosen Context** (Settings; defaults to Main) is force-shown at the moment the mode is turned on, and again whenever the choice is changed while the mode is on — so entering the mode lands on an explicit Context rather than whichever happened to be visible. After that, the usual show/hide (shortcuts, sidebar) moves the single visible Context around as normal.
+- **Exception — entering the mode from a single-Context view.** If exactly one Context is already visible when the mode is turned on, that Context is adopted as the chosen Context and nothing is force-shown. The screen is already a single-Context view, so switching away from it to whatever the dropdown happens to name would be surprising.
+- **The Settings dropdown** displays the single visible Context whenever there is one, in preference to the stored choice — so what it shows is what turning the mode on would produce. It is disabled for as long as the mode is on: from that point the Context on screen is the active one and the usual show/hide is what moves it. The stored choice therefore only governs turning the mode on with zero or several Contexts visible, which is exactly when the dropdown is editable and shows that stored value. (`update_settings` still force-shows on a choice change while the mode is on; the UI no longer offers that path.)
 
 ## Keyboard Shortcuts
 
