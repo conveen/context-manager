@@ -2,17 +2,40 @@
 import type { Settings, Context } from "./lib/types";
 import * as api from "./lib/api";
 
+interface Props {
+    // Contexts from the parent's polled app data. Passed in rather than fetched
+    // here because the single-context dropdown's locked state depends on *live*
+    // visibility, which changes from outside this panel (hotkeys, the sidebar).
+    contexts: Context[];
+}
+
+const { contexts }: Props = $props();
+
 let settings = $state<Settings | null>(null);
-let contexts = $state<Context[]>([]);
 let loading = $state(true);
 let saving = $state(false);
 let error = $state<string | null>(null);
 let success = $state(false);
 
-// The Main Context's id, and the currently-chosen single-context id resolved
-// against the live context list (a null or stale choice falls back to Main).
 const mainId = $derived(contexts.find((c) => c.is_main)?.id ?? "");
+
+// The one Context on screen, when exactly one is. Turning Single Context Mode
+// on adopts it (the backend does that), so the dropdown shows it in preference
+// to the stored choice — what it displays is what enabling the mode produces.
+const shownCtx = $derived.by(() => {
+    const visible = contexts.filter((c) => c.visible);
+    return visible.length === 1 ? visible[0] : null;
+});
+
+// The dropdown is read-only while the mode is on: from that point the Context
+// on screen is the active one, and the usual show/hide is what moves it. The
+// stored choice therefore only ever applies to turning the mode on with zero or
+// several Contexts visible — precisely the case where the dropdown is editable
+// and shows that stored value.
+const locked = $derived(!!settings?.single_context_mode);
+
 const selectedCtxId = $derived.by(() => {
+    if (shownCtx) return shownCtx.id;
     const id = settings?.single_context_id;
     return id && contexts.some((c) => c.id === id) ? id : mainId;
 });
@@ -21,7 +44,6 @@ async function loadSettings() {
     try {
         const data = await api.getAppData();
         settings = data.settings;
-        contexts = data.contexts;
         error = null;
     } catch (e) {
         error = String(e);
@@ -41,7 +63,10 @@ async function saveField(patch: Partial<Settings>) {
     success = false;
     try {
         await api.updateSettings(updatedSettings);
-        settings = updatedSettings;
+        // Re-read rather than trusting the local merge: turning Single Context
+        // Mode on while one Context is shown makes the backend adopt that
+        // Context as the choice, overwriting the id we just sent.
+        await loadSettings();
         success = true;
         setTimeout(() => {
             success = false;
@@ -110,8 +135,8 @@ $effect(() => {
             <!-- Single Context Mode -->
             <div class="setting-group">
                 <div class="setting-header">
-                    <h3>Single Context Mode</h3>
-                    <p class="description">Only show one Context at a time</p>
+                    <h3>Single Context Mode (SCM)</h3>
+                    <p class="description">Focus with a single Context</p>
                 </div>
                 <div class="single-ctx-controls">
                     <label class="toggle-wrapper">
@@ -136,7 +161,8 @@ $effect(() => {
                             id="single-ctx-select"
                             class="ctx-select"
                             value={selectedCtxId}
-                            disabled={saving}
+                            disabled={saving || locked}
+                            title={locked ? "Single Context Mode is already enabled" : undefined}
                             onchange={(e) => saveField({ single_context_id: e.currentTarget.value })}
                         >
                             {#each contexts as ctx (ctx.id)}
@@ -146,9 +172,13 @@ $effect(() => {
                     </div>
                 </div>
                 <p class="detail-text">
-                    When enabled, showing a Context automatically hides all others. Turning it
-                    on (or changing the choice above) switches to the selected Context and hides
-                    the rest. Defaults to <strong>main</strong>.
+                    {#if locked}
+                        Only one context is visible at a time.
+                        Since SCM is enabled the dropdown is disabled - use the panel or shortcuts to switch between Contexts.
+                    {:else}
+                        When enabled, only one Context is visible at a time.
+                        Turning it on switches to the selected Context in the dropdown and hides the rest.
+                    {/if}
                 </p>
             </div>
 

@@ -9,18 +9,19 @@ use crate::state::{AppState, Settings};
 
 /// Updates application settings and saves to disk.
 ///
-/// If the update turns Single Context Mode **on**, or changes the chosen Context
-/// while it is on, the chosen Context is force-shown — which, because the mode is
-/// now on, causes the show logic to hide every other Context. Unrelated settings
-/// edits (meta key, toggling the mode off) don't move any
-/// windows. The chosen Context is resolved from `single_context_id`, falling back
+/// Enabling Single Context Mode (SCM) when more than one Context is visible,
+/// or changing the chosen Context while it's enabled, causes window visibility changes.
+/// If SCM is enabled with one Context visible, it becomes the `single_context_id` and no windows change
+/// (the frontend must re-read settings because the chosen ID is overwritten).
+/// Unrelated settings edits (meta key, toggling the mode off) don't move any windows.
+/// The chosen Context is resolved from `single_context_id`, falling back
 /// to Main when it is unset or names a Context that no longer exists.
 ///
 /// If the update changes `meta_key`, all global shortcuts are unregistered and
 /// re-registered under the new modifier so the change takes effect immediately.
 /// If the new registration fails (e.g. the combination is claimed by another
-/// application), the previous modifier is restored — in settings and in the OS
-/// registration — and an error is returned.
+/// application), the previous modifier is restored in settings and in the OS
+/// registration, and an error is returned.
 #[tauri::command]
 pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
     // Store settings and decide whether to enforce single-context visibility,
@@ -33,10 +34,21 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
         let prev_target = data.settings.single_context_id.clone();
         let prev_meta = data.settings.meta_key.clone();
         data.settings = settings;
-        let _ = state.save_tx.send(data.clone());
 
+        let turning_on = data.settings.single_context_mode && !was_enabled;
         let target_changed = data.settings.single_context_id != prev_target;
-        let enforce_id = if data.settings.single_context_mode && (!was_enabled || target_changed) {
+        // On the off→on transition, a screen already showing exactly one
+        // Context *is* a single-Context view, so adopt that Context as the
+        // choice and enforce nothing — switching the user away from what they
+        // are looking at, to whatever the dropdown happens to name, is
+        // surprising. Any other visible count (zero, or several) has no current
+        // Context to preserve and collapses to the chosen one as before.
+        let shown = turning_on.then(|| data.single_visible()).flatten();
+
+        let enforce_id = if let Some(i) = shown {
+            data.settings.single_context_id = Some(data.contexts[i].id.clone());
+            None
+        } else if data.settings.single_context_mode && (turning_on || target_changed) {
             data.settings
                 .single_context_id
                 .clone()
@@ -45,6 +57,10 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
         } else {
             None
         };
+
+        // Sent after the adoption above so the persisted choice matches what is
+        // on screen.
+        let _ = state.save_tx.send(data.clone());
         let prev_meta = (data.settings.meta_key != prev_meta).then_some(prev_meta);
         (enforce_id, prev_meta)
     };
