@@ -44,8 +44,9 @@ pub struct WindowRef {
 ///
 /// A window may belong to more than one Context simultaneously. A window is
 /// considered visible on screen when at least one of its Contexts is visible.
-/// The Main Context (identified by `is_main == true`) is always present and
-/// receives newly detected windows automatically.
+/// The Main Context (identified by `is_main == true`) is always present and is
+/// the fallback destination for newly detected windows; see
+/// [`AppData::additions_target`] for the full resolution.
 ///
 /// # Invariants
 /// - Exactly one `Context` in `AppData::contexts` has `is_main == true`.
@@ -156,6 +157,51 @@ impl AppData {
     /// orders dense, so this equals `contexts.len()`.
     pub fn next_order(&self) -> u32 {
         self.contexts.iter().map(|c| c.order).max().map_or(0, |m| m + 1)
+    }
+
+    /// Index in `contexts` of the only currently-visible Context, or `None` if
+    /// zero or several are visible.
+    ///
+    /// "Exactly one Context on screen" is the signal that the user is working
+    /// inside a single Context, which both the additions target below and
+    /// Single Context Mode's off→on transition treat as *the* current Context.
+    pub fn single_visible(&self) -> Option<usize> {
+        let mut visible = self.contexts.iter().enumerate().filter(|(_, c)| c.visible);
+        match (visible.next(), visible.next()) {
+            (Some((i, _)), None) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Index in `contexts` of the Context that newly detected windows should be
+    /// added to.
+    ///
+    /// Newly detected windows belong to whatever Context the user is currently
+    /// working in. That is only unambiguous when a single Context is on screen:
+    /// exactly one visible Context wins outright; failing that, Single Context
+    /// Mode's configured Context is used (nothing may be visible, but the mode
+    /// still pins which Context is current). Everything else falls back to Main,
+    /// the catch-all pool.
+    ///
+    /// The visible-Context rule deliberately outranks the Single Context Mode
+    /// rule so that toggling Contexts by hotkey tracks what is actually on
+    /// screen rather than the Settings dropdown's choice, which only pins the
+    /// Context at the moment the mode (or the choice) changes.
+    ///
+    /// # Invariants
+    /// - Always returns a valid index (Main always exists).
+    pub fn additions_target(&self) -> usize {
+        if let Some(i) = self.single_visible() {
+            return i;
+        }
+        if self.settings.single_context_mode {
+            if let Some(i) =
+                self.settings.single_context_id.as_deref().and_then(|id| self.contexts.iter().position(|c| c.id == id))
+            {
+                return i;
+            }
+        }
+        self.contexts.iter().position(|c| c.is_main).expect("Main Context always exists")
     }
 }
 

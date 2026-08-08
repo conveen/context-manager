@@ -90,7 +90,12 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 ///    minimized and thus absent from the on-screen enumeration, but still
 ///    exists and must remain tracked.
 /// 3. **Additions**: any live window whose `platform_id` is not tracked in any
-///    Context is added to the Main Context as a new `WindowRef`.
+///    Context is added as a new `WindowRef` to the Context the user is
+///    currently working in, as resolved by
+///    [`additions_target`](crate::state::AppData::additions_target): the
+///    single visible Context, else Single Context Mode's configured Context,
+///    else Main. All new windows in a tick land in the same Context — a single
+///    tick has one current Context.
 ///
 /// After reconciliation, the updated `AppData` is sent to the persistence
 /// worker via the save channel — but only if one of the three mutations
@@ -161,10 +166,13 @@ pub fn update_windows(app: &tauri::AppHandle) {
         changed |= ctx.windows.len() != before;
     }
 
-    // Add windows not yet tracked in any context to Main
-    let main_ctx = data.contexts.iter_mut().find(|c| c.is_main).unwrap();
+    // Add windows not yet tracked in any context to the current Context — the
+    // single visible one, or Single Context Mode's choice — falling back to
+    // Main. The immutable borrow ends before the mutable index below.
+    let target = data.additions_target();
+    let ctx = &mut data.contexts[target];
     for w in current.iter().filter(|w| !known_ids.contains(&w.platform_id)) {
-        main_ctx.windows.push(WindowRef {
+        ctx.windows.push(WindowRef {
             platform_id: w.platform_id,
             #[cfg(target_os = "macos")]
             pid: w.pid,

@@ -46,7 +46,7 @@ A window can appear in multiple Contexts. Membership is independent per Context.
 - Always exists; pinned as the first entry in the sidebar and all Context lists.
 - Cannot be deleted. Can be renamed.
 - Shortcut index is always `0` (`<meta>+0`); this index is not assignable to other Contexts.
-- All newly detected windows are **automatically added to Main** by the background window poll.
+- Newly detected windows are added to Main by the background window poll **whenever the current Context is ambiguous** — see [Window additions](#window-additions). Main is the catch-all, not an unconditional destination.
 - `<meta>+H` hides all Contexts including Main, hiding all windows system-wide.
 - Behaves identically to other Contexts in all other respects: appears in the sidebar with the same UI, participates in Single Context Mode, can be shown/hidden.
 
@@ -145,7 +145,7 @@ Shows the windows assigned to the current Context as a grid/list (app icon + win
 - **Drag a window card** from the "Available Windows" section (bottom) into the Context window list (top) to add it. By default this **moves** the window: it is added to the target Context and removed from Main (when the target is not Main).
 - **Shift+drag** **copies** instead of moves: the window is added to the target Context but kept in Main, so it stays in Available and can be added to further Contexts. This is how a window comes to belong to multiple Contexts.
 - **Drag a window card** out of the Context list to remove it.
-- Available Windows = Main's windows minus those already in this Context. Because every newly detected window is auto-added to Main, Available initially lists everything; once a window is *moved* (non-Shift) out of Main into another Context, it leaves Available. Shift-copy preserves it in Main and therefore in Available.
+- Available Windows = Main's windows minus those already in this Context. A window leaves Available once it is *moved* (non-Shift) out of Main into another Context, or when the poll adds it straight to a non-Main Context (see [Window additions](#window-additions)); dragging it out of its last non-Main Context returns it to Main, and to Available. Shift-copy preserves it in Main and therefore in Available.
 
 No live window dragging from the desktop. Everything happens within the app.
 
@@ -165,10 +165,41 @@ Window list is refreshed:
 - When the Context Manager window is opened
 - On a periodic background poll (every ~2s) to catch newly opened windows
 
-When a **new window appears**: auto-add it to Main.
-
 When a **window disappears** (app quit):
 - Its `WindowRef` is removed from all Contexts it belongs to.
+
+### Window additions
+
+When a **new window appears**, it is added to the Context the user is currently
+working in. "Current" is only unambiguous when a single Context is on screen, so
+the target is resolved in this order:
+
+1. **Exactly one Context is visible** → that Context.
+2. Otherwise, **Single Context Mode is on** → its chosen Context (Main if unset
+   or stale). The mode pins which Context is current even when nothing is shown.
+3. Otherwise → **Main**.
+
+| Single Context Mode | Visible Contexts | Target |
+|---|---|---|
+| off | 1 — Main | Main |
+| off | 1 — `work` | `work` |
+| off | 0 or ≥ 2 | Main |
+| on | 1 — `work` | `work` |
+| on | 0 (e.g. after `<meta>+H`) | chosen Context → Main |
+
+Rule 1 outranks rule 2 so that hotkey switching under Single Context Mode tracks
+what is actually on screen rather than the Settings dropdown's choice, which only
+pins the Context at the moment the mode (or the choice) changes.
+
+A window added under rule 1 needs no visibility reconciliation: it is on screen
+and its Context is visible, which already satisfies the "visible iff at least one
+of its Contexts is visible" rule. Rule 2's zero-visible case is the exception —
+the window is on screen while its Context is hidden. It is left alone; the next
+show/hide of that Context reconciles it, and auto-minimizing a window the user
+just opened would be hostile.
+
+All new windows seen in one poll tick land in the same Context: a single tick has
+one current Context.
 
 ## Persistence
 
