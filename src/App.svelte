@@ -1,6 +1,6 @@
 <script lang="ts">
 import { getCurrentWebviewWindow, type WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { LogicalSize } from "@tauri-apps/api/window";
+import { currentMonitor, LogicalSize } from "@tauri-apps/api/window";
 import * as api from "./lib/api";
 import type { AppData } from "./lib/types";
 import Sidebar from "./components/Sidebar.svelte";
@@ -65,18 +65,29 @@ let expandedWidth = 900;
 windowSubscription((appWindow) =>
     appWindow.onFocusChanged(async (event) => {
         const focused = event.payload;
-        // outerSize() is in physical pixels; convert to logical so setSize
-        // (which takes logical) is stable across repeated resizes on HiDPI.
         const factor = await appWindow.scaleFactor();
-        const size = (await appWindow.outerSize()).toLogical(factor);
+        // Read innerSize() because the window is decorated (title bar and border)
+        // Reading outerSize() can result in the bottom of the window below the task bar/off screen
+        // Must convert physical pixel measurement to logical for setSize
+        const size = (await appWindow.innerSize()).toLogical(factor);
+
+        // Protect against setting height taller than the monitor's work area
+        const monitor = await currentMonitor();
+        const workAreaHeight = monitor ? monitor.workArea.size.toLogical(monitor.scaleFactor).height : size.height;
+        const height = Math.min(size.height, workAreaHeight);
+
         if (focused) {
             showDetailPanel = true;
-            appWindow.setSize(new LogicalSize(expandedWidth, size.height));
+            appWindow.setSize(new LogicalSize(expandedWidth, height));
         } else {
             // Capture the current width before collapsing so we can restore it.
-            expandedWidth = size.width;
+            // These handlers await before writing, so a rapid focus/blur pair
+            // (Windows Snap Assist produces one) can deliver a second blur
+            // after we've already collapsed — ignore widths at the collapsed
+            // width, which would otherwise leave the window stuck narrow.
+            if (size.width > COLLAPSED_WIDTH + 8) expandedWidth = size.width;
             showDetailPanel = false;
-            appWindow.setSize(new LogicalSize(COLLAPSED_WIDTH, size.height));
+            appWindow.setSize(new LogicalSize(COLLAPSED_WIDTH, height));
         }
     }),
 );
