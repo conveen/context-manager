@@ -27,6 +27,10 @@ export const hideContext = (id: string) => invoke<void>("hide_context", { id });
 
 export const updateSettings = (settings: Settings) => invoke<void>("update_settings", { settings });
 
+// Accelerators the OS refused when the Context shortcuts were registered
+// (e.g. ["Ctrl+Alt+3"]); empty when they are all live.
+export const getFailedShortcuts = () => invoke<string[]>("get_failed_shortcuts");
+
 export const getScreenRecordingStatus = () => invoke<ScreenRecordingStatus>("get_screen_recording_status");
 
 // macOS only; rejects elsewhere. Only reachable from the permission banner,

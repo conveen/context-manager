@@ -129,13 +129,14 @@ pub fn run() {
                 data: Mutex::new(app_data),
                 save_tx,
                 screen_recording: Mutex::new(ScreenRecordingStatus::Granted),
+                failed_shortcuts: Mutex::new(vec![]),
             });
 
             // Register the global Context shortcuts (<meta>+0..9, <meta>+H).
-            // Without this the plugin handler below is never invoked.
-            if let Err(e) = hotkeys::register_all(app.handle()) {
-                eprintln!("failed to register global shortcuts: {e}");
-            }
+            // Without this the plugin handler below is never invoked. Any the
+            // OS refuses are recorded for the frontend to report; the rest stay
+            // live, so one collision no longer costs the whole set.
+            hotkeys::register_all(app.handle());
 
             wm::update_windows(app.handle());
             wm::start_poll(app.handle().clone());
@@ -170,6 +171,7 @@ pub fn run() {
             commands::visibility::show_context,
             commands::visibility::hide_context,
             commands::settings::update_settings,
+            commands::settings::get_failed_shortcuts,
             #[cfg(debug_assertions)]
             commands::settings::open_devtools,
         ])

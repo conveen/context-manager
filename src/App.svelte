@@ -38,6 +38,26 @@ $effect(() => {
     return () => clearInterval(id);
 });
 
+// Global shortcuts are registered per-accelerator and the OS can refuse any of
+// them (on Windows, whenever another process already owns the combination).
+// Report the dead ones once, through the same toast as any other failure.
+function reportFailedShortcuts(accelerators: string[]) {
+    if (accelerators.length === 0) return;
+    showError(
+        `These shortcuts couldn't be registered: ${accelerators.join(", ")}. ` +
+            "Another application is likely using them — try a different modifier in Settings.",
+    );
+}
+
+// Shortcuts are registered during backend startup, before this webview exists,
+// so the "shortcuts-failed" event for that registration is never delivered
+// here. Ask for the recorded list instead, once, on mount.
+$effect(() => {
+    api.getFailedShortcuts().then(reportFailedShortcuts, (e) => {
+        if (import.meta.env.DEV) console.error("Failed to read shortcut failures:", e);
+    });
+});
+
 // The subscribe/cleanup dance shared by the window-event effects below:
 // subscribe to the current webview window when the component mounts, and call
 // the returned unlisten function on teardown. If teardown wins the race
@@ -126,6 +146,12 @@ $effect(() => {
 // Refresh immediately when the backend changes context visibility
 // (e.g. via global shortcuts) instead of waiting for the periodic poll.
 windowSubscription((appWindow) => appWindow.listen("contexts-changed", () => refresh()));
+
+// Emitted when re-registering under a new modifier leaves shortcuts dead —
+// the case the on-mount fetch above cannot see, since it happens later.
+windowSubscription((appWindow) =>
+    appWindow.listen<string[]>("shortcuts-failed", (event) => reportFailedShortcuts(event.payload)),
+);
 
 const mainContext = $derived(appData?.contexts.find((c) => c.is_main) ?? null);
 // Two-tier sidebar order: shortcut-assigned contexts first (auto-ordered by

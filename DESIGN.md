@@ -107,14 +107,28 @@ When enabled:
 
 ## Keyboard Shortcuts
 
-| Action | Default |
-|---|---|
-| Show/hide Context n (0-indexed) | `Ctrl+Alt+n` |
-| Hide all Contexts | `Ctrl+Alt+H` |
+| Action | Default (macOS) | Default (Windows) |
+|---|---|---|
+| Show/hide Context n (0-indexed) | `Ctrl+Alt+n` | `Ctrl+Alt+Win+n` |
+| Hide all Contexts | `Ctrl+Alt+H` | `Ctrl+Alt+Win+H` |
 
-- **Meta key** is configurable in Settings; defaults to `Ctrl+Alt`.
+- **Meta key** is configurable in Settings; defaults to `Ctrl+Alt`, except on
+  Windows where it defaults to `Ctrl+Alt+Super` (Super = the Windows key;
+  Command on macOS). Windows synthesises `Ctrl+Alt` from AltGr, so
+  `Ctrl+Alt+<digit>` is frequently already claimed by resident software, and
+  `RegisterHotKey` refuses any combination another process owns. The third
+  modifier takes the combination out of that contested space. The default only
+  applies to fresh installs; a saved modifier is never rewritten.
 - Shortcuts are registered globally via `tauri-plugin-global-shortcut`.
 - A Context must have a `shortcut_index` assigned to be reachable by shortcut.
+- **Registration is per-accelerator and failures are non-fatal.** Each
+  accelerator is attempted on its own, so one the OS refuses costs only itself
+  and the rest stay live. The refused accelerators are surfaced in the error
+  toast — at startup from a list the frontend reads on mount (the registration
+  happens before the webview can listen for events), and on a modifier change
+  from a `shortcuts-failed` event. A modifier under which *nothing* registers is
+  rejected outright and the previous one restored, so the user is never left
+  with no shortcuts at all.
 
 ## Application UI
 
@@ -223,7 +237,7 @@ Writes are debounced (250ms) after any state change to avoid thrashing.
 
 | Setting | Type | Default |
 |---|---|---|
-| Meta key | Enum (Ctrl+Alt, Cmd+Opt, etc.) | Ctrl+Alt |
+| Meta key | Enum (Ctrl+Alt, Cmd+Opt, Ctrl+Alt+Super) | Ctrl+Alt+Super on Windows, Ctrl+Alt elsewhere |
 | Single Context Mode | bool | false |
 | Single Context (which Context is force-shown when the mode is enabled) | Context id (`None` → Main) | Main |
 

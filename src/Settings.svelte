@@ -19,6 +19,12 @@ let success = $state(false);
 
 const mainId = $derived(contexts.find((c) => c.is_main)?.id ?? "");
 
+// The Super modifier is the Windows key on Windows and Command on macOS, so
+// the option is labelled for whichever platform is running. Display only —
+// the backend maps the stored `CtrlAltSuper` to the right key either way.
+const isWindows = navigator.userAgent.includes("Windows");
+const superLabel = isWindows ? "Ctrl+Alt+Win" : "Ctrl+Alt+Cmd";
+
 // The one Context on screen, when exactly one is. Turning Single Context Mode
 // on adopts it (the backend does that), so the dropdown shows it in preference
 // to the stored choice — what it displays is what enabling the mode produces.
@@ -128,6 +134,17 @@ $effect(() => {
                     >
                         <span class="option-name">Cmd+Opt</span>
                         <span class="option-desc">macOS native</span>
+                    </button>
+                    <button
+                        class="option-btn"
+                        class:active={settings.meta_key === "CtrlAltSuper"}
+                        disabled={saving}
+                        onclick={() => saveField({ meta_key: "CtrlAltSuper" })}
+                    >
+                        <span class="option-name">{superLabel}</span>
+                        <span class="option-desc">
+                            {isWindows ? "Windows default — avoids AltGr clashes" : "Rarely claimed by other apps"}
+                        </span>
                     </button>
                 </div>
             </div>
