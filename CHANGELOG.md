@@ -29,6 +29,10 @@ How to cut a release:
 - Newly opened windows are now added to the Context you're working in rather than always to `main`. When exactly one Context is on screen, that Context gets the window; with Single Context Mode on and nothing on screen, the Context chosen in Settings does; otherwise new windows still go to `main` as before. ([#93](https://github.com/conveen/context-manager/pull/93))
 - Turning on Single Context Mode while exactly one Context is already on screen now keeps that Context on screen instead of switching to whichever Context the Settings dropdown names. The dropdown shows the Context you're looking at whenever exactly one is visible, so it always previews what enabling the mode will do, and it is disabled for as long as the mode is on — show a different Context to change which one is active. Turning the mode on with nothing, or several Contexts, on screen still switches to the chosen Context. ([#93](https://github.com/conveen/context-manager/pull/93))
 
+### Fixed
+
+- Snapping the main window to the side of the screen with the window manager (`META`+`Left`/`Right` on Windows) no longer grows it taller than the display, which pushed the sidebar's Add Context button off the bottom edge. The window grew by the height of its title bar and border on every focus change; its height is now also clamped to the monitor's work area. A rapid focus/blur pair from Snap Assist no longer leaves the window stuck at the collapsed width either. ([#91](https://github.com/conveen/context-manager/pull/91))
+
 ## [v0.1.1] - 2026-07-20
 
 ### Added
