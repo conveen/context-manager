@@ -84,10 +84,40 @@ pub struct Context {
 /// - The chosen combination must not conflict with common system shortcuts.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum MetaKey {
-    /// `Ctrl+Alt` — default; works on Windows and Linux; available on macOS.
+    /// `Ctrl+Alt` — works on Windows and Linux; available on macOS. Default
+    /// off Windows, where it is also the AltGr combination (see
+    /// [`MetaKey::default`]).
     CtrlAlt,
     /// `Command+Option` — macOS-native feel; maps to `CommandOrControl+Alt` in Tauri.
     CmdOpt,
+    /// `Ctrl+Alt+Super`, where Super is the Windows key on Windows and Command
+    /// on macOS. Default on Windows: adding a third modifier takes the
+    /// combination out of AltGr's range, which is what makes `Ctrl+Alt+<digit>`
+    /// so contested there.
+    CtrlAltSuper,
+}
+
+impl Default for MetaKey {
+    /// `Ctrl+Alt+Super` on Windows, `Ctrl+Alt` everywhere else.
+    ///
+    /// Windows synthesises `Ctrl+Alt` from AltGr, so resident software
+    /// (keyboard-layout and IME tools, vendor control panels) commonly claims
+    /// `Ctrl+Alt+<digit>` — and `RegisterHotKey` refuses a combination another
+    /// process already owns, leaving the shortcut dead. macOS's Carbon hotkey
+    /// API has no such contention, so `Ctrl+Alt` stays the default there.
+    ///
+    /// Only affects fresh installs: an existing `data.json` carries whatever
+    /// modifier it was last saved with.
+    fn default() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            MetaKey::CtrlAltSuper
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            MetaKey::CtrlAlt
+        }
+    }
 }
 
 /// Whether the OS is currently letting us read the window list.
@@ -248,7 +278,7 @@ impl Default for AppData {
                 order: 0,
                 visible: true,
             }],
-            settings: Settings { meta_key: MetaKey::CtrlAlt, single_context_mode: false, single_context_id: None },
+            settings: Settings { meta_key: MetaKey::default(), single_context_mode: false, single_context_id: None },
         }
     }
 }
@@ -275,4 +305,11 @@ pub struct AppState {
     /// command. Deliberately outside `data`: it is derived from the OS at
     /// runtime and must not be written to `data.json`.
     pub screen_recording: Mutex<ScreenRecordingStatus>,
+    /// Accelerators the OS refused at the last (re)registration, e.g.
+    /// `"Ctrl+Alt+3"` — empty when every shortcut is live. Rewritten in full by
+    /// [`crate::hotkeys::register_all`] and read by the `get_failed_shortcuts`
+    /// command, which is how the frontend can report dead shortcuts that were
+    /// registered before it finished loading. Runtime-only, like
+    /// `screen_recording`.
+    pub failed_shortcuts: Mutex<Vec<String>>,
 }

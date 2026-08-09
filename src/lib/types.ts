@@ -18,7 +18,9 @@ export interface Context {
     visible: boolean;
 }
 
-export type MetaKey = "CtrlAlt" | "CmdOpt";
+// "CtrlAltSuper" is Ctrl+Alt+Win on Windows (the default there) and
+// Ctrl+Alt+Cmd on macOS.
+export type MetaKey = "CtrlAlt" | "CmdOpt" | "CtrlAltSuper";
 
 export interface Settings {
     meta_key: MetaKey;

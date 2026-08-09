@@ -19,9 +19,11 @@ use crate::state::{AppState, Settings};
 ///
 /// If the update changes `meta_key`, all global shortcuts are unregistered and
 /// re-registered under the new modifier so the change takes effect immediately.
-/// If the new registration fails (e.g. the combination is claimed by another
-/// application), the previous modifier is restored in settings and in the OS
-/// registration, and an error is returned.
+/// Accelerators the OS refuses (e.g. ones another application already owns) are
+/// reported to the frontend by [`crate::hotkeys::register_all`] and otherwise
+/// tolerated. Only a modifier under which *nothing* registers is rejected: the
+/// previous modifier is restored in settings and in the OS registration, and an
+/// error is returned.
 #[tauri::command]
 pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
     // Store settings and decide whether to enforce single-context visibility,
@@ -65,11 +67,20 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
         (enforce_id, prev_meta)
     };
 
-    // Rebind the global shortcuts under the new modifier. On failure, roll the
-    // modifier back so the shortcuts don't go dead entirely (the previous one
-    // was registered successfully before, so restoring it should succeed).
+    // Rebind the global shortcuts under the new modifier. A partial failure is
+    // kept: the accelerators that did register work, and `register_all` has
+    // already reported the refused ones to the frontend. Only a modifier that
+    // registers *nothing* is rolled back, since that leaves the user with no
+    // shortcuts at all (the previous modifier registered successfully before,
+    // so restoring it should succeed).
     if let Some(prev_meta) = prev_meta {
-        if let Err(e) = hotkeys::reregister_all(&app) {
+        let total_failure = match hotkeys::reregister_all(&app) {
+            Ok(reg) => reg.all_failed().then(|| {
+                "the OS refused every shortcut — another application may already own that combination".to_string()
+            }),
+            Err(e) => Some(e),
+        };
+        if let Some(reason) = total_failure {
             let state = app.state::<AppState>();
             {
                 let mut data = state.data.lock().unwrap();
@@ -79,7 +90,7 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
             if let Err(restore_err) = hotkeys::reregister_all(&app) {
                 eprintln!("failed to restore previous shortcut modifier: {restore_err}");
             }
-            return Err(format!("failed to apply the new shortcut modifier: {e}"));
+            return Err(format!("failed to apply the new shortcut modifier: {reason}"));
         }
     }
 
@@ -89,6 +100,18 @@ pub fn update_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), 
         let _ = app.emit("contexts-changed", ());
     }
     Ok(())
+}
+
+/// Returns the accelerators the OS refused at the last (re)registration, e.g.
+/// `["Ctrl+Alt+3"]`; empty when every Context shortcut is live.
+///
+/// Exists for the startup case: shortcuts are registered during `setup`, long
+/// before the webview can listen for the `shortcuts-failed` event, so the
+/// frontend reads the recorded list once on mount instead of missing the only
+/// notification it would ever get.
+#[tauri::command]
+pub fn get_failed_shortcuts(app: tauri::AppHandle) -> Vec<String> {
+    app.state::<AppState>().failed_shortcuts.lock().unwrap().clone()
 }
 
 /// Opens the settings view: shows/focuses the main window and emits the
