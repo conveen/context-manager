@@ -2,6 +2,8 @@
 //! helpers they build on:
 //! - [`context`] — Context CRUD, shortcut assignment, and sidebar ordering.
 //! - [`membership`] — moving/copying windows between Contexts.
+//! - [`permissions`] — reading and repairing the OS permissions window
+//!   enumeration depends on.
 //! - [`visibility`] — showing/hiding Contexts and global-hotkey dispatch.
 //! - [`settings`] — settings updates and the app-window helpers reached from
 //!   the native menu and tray.
@@ -14,6 +16,7 @@
 
 pub mod context;
 pub mod membership;
+pub mod permissions;
 pub mod settings;
 pub mod visibility;
 

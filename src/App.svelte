@@ -2,10 +2,11 @@
 import { getCurrentWebviewWindow, type WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { currentMonitor, LogicalSize } from "@tauri-apps/api/window";
 import * as api from "./lib/api";
-import type { AppData } from "./lib/types";
+import type { AppData, ScreenRecordingStatus } from "./lib/types";
 import Sidebar from "./components/Sidebar.svelte";
 import DetailPanel from "./components/DetailPanel.svelte";
 import ErrorToast from "./components/ErrorToast.svelte";
+import PermissionBanner from "./components/PermissionBanner.svelte";
 import Settings from "./Settings.svelte";
 import { showError } from "./lib/toast.svelte";
 
@@ -13,10 +14,15 @@ let appData = $state<AppData | null>(null);
 let selectedId = $state<string | null>(null);
 let showDetailPanel = $state(true);
 let showSettings = $state(false);
+// Assume the permission is fine until the backend says otherwise, so the
+// banner never flashes during the first poll.
+let screenRecording = $state<ScreenRecordingStatus>("Granted");
 
 async function refresh() {
     try {
-        appData = await api.getAppData();
+        const [data, status] = await Promise.all([api.getAppData(), api.getScreenRecordingStatus()]);
+        appData = data;
+        screenRecording = status;
         // Clear selection if the selected context was deleted.
         if (selectedId && !appData.contexts.find((c) => c.id === selectedId)) {
             selectedId = null;
@@ -169,33 +175,52 @@ function closeSettings() {
         {#if import.meta.env.DEV && showDetailPanel}
             <button class="devtools-btn" onclick={handleOpenDevtools} title="Open DevTools">⚙️</button>
         {/if}
-        {#if appData}
-            <Sidebar
-                contexts={sidebarContexts}
-                {selectedId}
-                onSelect={(id) => { selectedId = id; }}
-                onCreate={handleCreate}
-                onRefresh={refresh}
-            />
-            {#if showDetailPanel}
-                <DetailPanel
-                    context={selectedContext}
-                    {mainContext}
+        <!-- Spans both panels, so it reads as a statement about the window list
+             as a whole rather than about the selected Context. Suppressed while
+             the window is collapsed to the sidebar strip on blur, where there
+             is no room to read it. -->
+        {#if showDetailPanel}
+            <PermissionBanner status={screenRecording} />
+        {/if}
+        <div class="panels">
+            {#if appData}
+                <Sidebar
+                    contexts={sidebarContexts}
+                    {selectedId}
+                    onSelect={(id) => { selectedId = id; }}
+                    onCreate={handleCreate}
                     onRefresh={refresh}
                 />
+                {#if showDetailPanel}
+                    <DetailPanel
+                        context={selectedContext}
+                        {mainContext}
+                        onRefresh={refresh}
+                    />
+                {/if}
+            {:else}
+                <div class="loading">Loading…</div>
             {/if}
-        {:else}
-            <div class="loading">Loading…</div>
-        {/if}
+        </div>
     {/if}
 </div>
 
 <style>
+    /* Column so the permission banner can sit above both panels; `.panels`
+       restores the original side-by-side row for the panels themselves. */
     .app {
         display: flex;
+        flex-direction: column;
         height: 100vh;
         overflow: hidden;
         position: relative;
+    }
+
+    .panels {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .devtools-btn {
@@ -231,7 +256,8 @@ function closeSettings() {
     .settings-view {
         position: relative;
         width: 100%;
-        height: 100%;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
     }
 

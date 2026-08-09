@@ -28,6 +28,13 @@ export interface Settings {
     single_context_id: string | null;
 }
 
+// Whether the OS is letting the backend read window titles. Mirrors the Rust
+// `ScreenRecordingStatus` enum, whose unit variants serialize to their names.
+// - "Granted": titles are readable, or the platform doesn't gate them (Windows).
+// - "Denied": macOS Screen Recording permission is not granted.
+// - "NotInEffect": granted, but not applied to this process — needs a relaunch.
+export type ScreenRecordingStatus = "Granted" | "Denied" | "NotInEffect";
+
 export interface AppData {
     contexts: Context[];
     settings: Settings;

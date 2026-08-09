@@ -32,6 +32,7 @@ How to cut a release:
 ### Fixed
 
 - Snapping the main window to the side of the screen with the window manager (`META`+`Left`/`Right` on Windows) no longer grows it taller than the display, which pushed the sidebar's Add Context button off the bottom edge. The window grew by the height of its title bar and border on every focus change; its height is now also clamped to the monitor's work area. A rapid focus/blur pair from Snap Assist no longer leaves the window stuck at the collapsed width either. ([#91](https://github.com/conveen/context-manager/pull/91))
+- On macOS, an empty available-windows list caused by missing Screen Recording permission is no longer silent. A banner above the sidebar and detail panel explains that the permission is missing — or granted but not yet in effect for the running app — with a button that opens the System Settings pane and a reminder that Context Manager must be quit and relaunched before a new grant applies. The permission is also requested once at startup, so the app appears in that pane before the user goes looking for it. ([#96](https://github.com/conveen/context-manager/pull/96))
 
 ## [v0.1.1] - 2026-07-20
 

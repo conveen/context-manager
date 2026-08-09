@@ -90,6 +90,37 @@ pub enum MetaKey {
     CmdOpt,
 }
 
+/// Whether the OS is currently letting us read the window list.
+///
+/// Runtime-only (never persisted): it describes the environment the app is
+/// running in, not user data. macOS gates `kCGWindowName` behind Screen
+/// Recording permission, so without it every window's title comes back as
+/// `CFNull` and enumeration yields nothing — indistinguishable, from the
+/// window list alone, from having no windows open. This enum is what makes the
+/// two distinguishable in the UI.
+///
+/// # Invariants
+/// - Platforms that do not gate window enumeration (Windows) always report
+///   [`Granted`](Self::Granted).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+// Only the macOS backend ever constructs the two failure variants; elsewhere
+// the enum is inhabited solely by `Granted`, which reads as dead code.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum ScreenRecordingStatus {
+    /// Window titles are readable: the permission is in effect, or the platform
+    /// does not gate them at all.
+    Granted,
+    /// macOS reports the permission is not granted to this process. The user
+    /// has to grant it in System Settings and relaunch the app.
+    Denied,
+    /// macOS reports the permission *is* granted, yet titles are still
+    /// unreadable. Two known causes, with the same fix (quit and relaunch):
+    /// a grant does not apply to an already-running process, and for
+    /// unsigned/ad-hoc-signed builds a TCC entry from an earlier build can read
+    /// as granted while binding to a different code-signature identity.
+    NotInEffect,
+}
+
 /// User-configurable application settings.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {
@@ -232,9 +263,16 @@ impl Default for AppData {
 ///   deadlock the async runtime.
 /// - `save_tx`'s corresponding receiver is owned by the saver task spawned in
 ///   `persistence::spawn_saver` and lives for the duration of the application.
+/// - `screen_recording` is never locked while `data` is held (and vice versa),
+///   so the two mutexes cannot deadlock against each other.
 pub struct AppState {
     /// Mutex-protected application data; the single source of truth at runtime.
     pub data: Mutex<AppData>,
     /// Channel used to signal the persistence worker that `data` has changed.
     pub save_tx: watch::Sender<AppData>,
+    /// Whether window titles are currently readable. Refreshed by the
+    /// background window poll and read by the `get_screen_recording_status`
+    /// command. Deliberately outside `data`: it is derived from the OS at
+    /// runtime and must not be written to `data.json`.
+    pub screen_recording: Mutex<ScreenRecordingStatus>,
 }

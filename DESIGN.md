@@ -157,6 +157,14 @@ No live window dragging from the desktop. Everything happens within the app.
 - `CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)` to get all windows.
 - Filter: `kCGWindowLayer == 0` (normal windows), exclude our own app.
 - Enrich with AX API to get the `AXWindow` element for position manipulation.
+- `kCGWindowName` (the title we identify a window by) is only populated when
+  **Screen Recording** permission is in effect, so without it enumeration yields
+  nothing at all. That is indistinguishable from "no windows are open" by the
+  window list alone, so an empty enumeration is classified into a **screen
+  recording status** — `Granted` / `Denied` / `NotInEffect` — from
+  `CGPreflightScreenCaptureAccess` plus a check for windows suppressed by a
+  missing title. The status is runtime-only state (never persisted) and drives
+  the permission banner; see [Error Handling](#error-handling).
 
 ### Windows
 - `EnumWindows` callback filtering for `WS_VISIBLE`, non-tool windows, non-our-own.
@@ -224,6 +232,13 @@ Writes are debounced (250ms) after any state change to avoid thrashing.
 - If a window cannot be hidden (e.g., system window, fullscreen app), surface a visible error notification: *"[Window title] cannot be added to a Context — this window type is not supported."*
 - Do not add unsupported windows silently.
 - On macOS, if Accessibility permissions are not granted, show an onboarding prompt with a direct link to System Settings > Privacy & Security > Accessibility.
+- On macOS, if Screen Recording permission is not in effect, show a banner above
+  the sidebar and detail panel rather than an empty window list, with a button
+  that opens System Settings > Privacy & Security > Screen Recording. The banner
+  distinguishes *not granted* from *granted but not applied to this process*,
+  and says in both cases that the app must be quit and relaunched — macOS does
+  not apply a new grant to an already-running process. Screen Recording is
+  requested once at startup so the app appears in that settings pane at all.
 
 ## Out of Scope (for now)
 

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 use tokio::time::Duration;
 
-use crate::state::{AppState, WindowRef};
+use crate::state::{AppState, ScreenRecordingStatus, WindowRef};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -74,6 +74,37 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
     }
 }
 
+/// Returns why the window list is empty: because nothing is open, or because
+/// the OS is withholding the window titles we identify windows by.
+///
+/// Only meaningful after an [`enumerate`] call that returned nothing — see the
+/// macOS implementation for why. Platforms that do not gate window enumeration
+/// always report [`ScreenRecordingStatus::Granted`].
+///
+/// # Arguments
+/// - `our_pid`: Process ID of the running application, as passed to
+///   [`enumerate`].
+pub fn screen_recording_status(our_pid: u32) -> ScreenRecordingStatus {
+    #[cfg(target_os = "macos")]
+    {
+        macos::screen_recording_status(our_pid)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = our_pid;
+        ScreenRecordingStatus::Granted
+    }
+}
+
+/// Prompts for any OS permission window enumeration depends on, if it has never
+/// been answered. Called once at startup; a no-op off macOS.
+pub fn request_window_access() {
+    #[cfg(target_os = "macos")]
+    {
+        macos::request_screen_recording_access();
+    }
+}
+
 /// Reconciles the live set of OS windows against `AppState`.
 ///
 /// Three mutations are applied atomically under the `AppState` data lock:
@@ -118,8 +149,11 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 /// - The `AppState` data lock is not held across any async `.await` point.
 ///
 /// On macOS 10.15+, window enumeration requires Screen Recording permission
-/// (System Preferences > Security & Privacy > Screen Recording). Without it,
-/// application windows will not appear in the available windows list.
+/// (System Settings > Privacy & Security > Screen Recording). Without it,
+/// application windows will not appear in the available windows list — so an
+/// enumeration that comes back empty also refreshes
+/// [`AppState::screen_recording`](crate::state::AppState::screen_recording),
+/// which is what lets the UI tell that apart from having no windows open.
 pub fn update_windows(app: &tauri::AppHandle) {
     let our_pid = std::process::id();
     let current = enumerate(our_pid);
@@ -127,6 +161,14 @@ pub fn update_windows(app: &tauri::AppHandle) {
     let current_ids: HashSet<u64> = current.iter().map(|w| w.platform_id).collect();
 
     let state = app.state::<AppState>();
+
+    // Refresh the permission status only when the enumeration came back empty:
+    // that is the one ambiguous result, and any enumerated window is itself
+    // proof that titles are readable. Done before taking the `data` lock — the
+    // two mutexes are never held at once.
+    *state.screen_recording.lock().unwrap() =
+        if current.is_empty() { screen_recording_status(our_pid) } else { ScreenRecordingStatus::Granted };
+
     let mut data = state.data.lock().unwrap();
 
     // IDs tracked across all contexts before this update

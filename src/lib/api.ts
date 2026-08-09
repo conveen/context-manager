@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppData, Context, Settings } from "./types";
+import type { AppData, Context, ScreenRecordingStatus, Settings } from "./types";
 
 export const getAppData = () => invoke<AppData>("get_app_data");
 
@@ -26,5 +26,11 @@ export const showContext = (id: string) => invoke<void>("show_context", { id });
 export const hideContext = (id: string) => invoke<void>("hide_context", { id });
 
 export const updateSettings = (settings: Settings) => invoke<void>("update_settings", { settings });
+
+export const getScreenRecordingStatus = () => invoke<ScreenRecordingStatus>("get_screen_recording_status");
+
+// macOS only; rejects elsewhere. Only reachable from the permission banner,
+// which is never shown on other platforms.
+export const openScreenRecordingSettings = () => invoke<void>("open_screen_recording_settings");
 
 export const openDevtools = () => invoke<void>("open_devtools");

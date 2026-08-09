@@ -8,11 +8,20 @@ use core_foundation::{
 };
 
 use super::WindowInfo;
-use crate::state::WindowRef;
+use crate::state::{ScreenRecordingStatus, WindowRef};
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
+
+    /// Reports whether the current process has Screen Recording permission,
+    /// **without** prompting. macOS 10.15+.
+    fn CGPreflightScreenCaptureAccess() -> bool;
+
+    /// Reports whether the current process has Screen Recording permission,
+    /// displaying the system prompt the first time it is refused. Subsequent
+    /// calls return immediately without a prompt. macOS 10.15+.
+    fn CGRequestScreenCaptureAccess() -> bool;
 }
 
 const LIST_ON_SCREEN_ONLY: u32 = 1 << 0;
@@ -133,6 +142,74 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
     }
 
     windows
+}
+
+/// Classifies *why* [`enumerate`] came back empty: no windows are open, or
+/// their titles are unreadable because Screen Recording permission is not in
+/// effect.
+///
+/// Two signals, because neither is sufficient alone:
+/// 1. `CGPreflightScreenCaptureAccess` — authoritative for the outright
+///    "not granted" case, and non-prompting, so it is safe to call on the poll.
+/// 2. A pass over the raw window list looking for a window we would otherwise
+///    have returned but whose `kCGWindowName` is missing. Preflight can report
+///    granted while the grant is not actually applied to this process (a fresh
+///    grant needs a relaunch; an ad-hoc-signed build can inherit a stale TCC
+///    entry), and only the titles reveal that.
+///
+/// # Arguments
+/// - `our_pid`: Process ID of the running application, matching [`enumerate`]'s
+///   argument — our own windows are ignored, since their titles are readable
+///   regardless of the permission.
+///
+/// # Preconditions/Assumptions
+/// - Intended to be called only when [`enumerate`] returned *no* windows.
+///   A single unreadable title is then evidence of the permission problem; when
+///   readable windows exist, an untitled window among them is ordinary and
+///   would make signal 2 a false positive.
+pub fn screen_recording_status(our_pid: u32) -> ScreenRecordingStatus {
+    if !unsafe { CGPreflightScreenCaptureAccess() } {
+        return ScreenRecordingStatus::Denied;
+    }
+
+    let raw = unsafe { CGWindowListCopyWindowInfo(LIST_ON_SCREEN_ONLY, NULL_WINDOW_ID) };
+    if raw.is_null() {
+        return ScreenRecordingStatus::Granted;
+    }
+    let arr: CFArray<CFDictionary<CFString, CFType>> = unsafe { CFArray::wrap_under_create_rule(raw) };
+
+    // Mirrors `enumerate`'s filter, stopping at the title check: an entry that
+    // passes every other test but has no readable title is one `enumerate`
+    // silently dropped.
+    let suppressed = arr.iter().any(|dict| {
+        dict_i32(&dict, "kCGWindowLayer") == Some(NORMAL_WINDOW_LAYER)
+            && dict_i32(&dict, "kCGWindowOwnerPID").is_some_and(|p| p as u32 != our_pid)
+            && dict_string(&dict, "kCGWindowName").is_none_or(|t| t.is_empty())
+    });
+
+    if suppressed {
+        ScreenRecordingStatus::NotInEffect
+    } else {
+        ScreenRecordingStatus::Granted
+    }
+}
+
+/// Asks macOS for Screen Recording permission, showing the system prompt if it
+/// has never been answered for this app.
+///
+/// Called once at startup. Besides prompting, this registers the app in System
+/// Settings > Privacy & Security > Screen Recording — an app that has never
+/// requested the permission is absent from that list, so the banner's "Open
+/// System Settings" button would otherwise send the user to a list they cannot
+/// find the app in.
+///
+/// The return value is deliberately ignored: a fresh grant does not apply to
+/// the already-running process, so it says nothing useful about *this* run.
+/// [`screen_recording_status`] is the authority.
+pub fn request_screen_recording_access() {
+    unsafe {
+        let _ = CGRequestScreenCaptureAccess();
+    }
 }
 
 // ---------------------------------------------------------------------------
