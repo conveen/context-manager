@@ -24,6 +24,8 @@ How to cut a release:
 
 ## [Unreleased]
 
+## [v0.1.2] - 2026-08-11
+
 ### Changed
 
 - Newly opened windows are now added to the Context you're working in rather than always to `main`. When exactly one Context is on screen, that Context gets the window; with Single Context Mode on and nothing on screen, the Context chosen in Settings does; otherwise new windows still go to `main` as before. ([#93](https://github.com/conveen/context-manager/pull/93))
