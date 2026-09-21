@@ -8,8 +8,8 @@ use tokio::sync::watch;
 /// `hidden` is set while the window is hidden by us and cleared when it is
 /// shown again. On Windows, `ShowWindow(SW_HIDE)`/`SW_SHOW` restore geometry
 /// natively, so no position is remembered. On macOS, hiding moves the window
-/// to a fixed corner (see `hidden_pos` below), so its original position is
-/// captured and restored explicitly.
+/// to a corner of the primary display (see `hidden_pos` below), so its
+/// original position is captured and restored explicitly.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WindowRef {
     /// Stable OS-assigned window identifier: CGWindowID on macOS, HWND value on Windows.
@@ -42,7 +42,8 @@ pub struct WindowRef {
     pub hidden_z: Option<u32>,
     /// Pre-hide `AXPosition` (top-left corner, in global screen coordinates),
     /// captured when the window is hidden so `show_window` can restore it
-    /// exactly. macOS-only: hiding there moves the window to a fixed corner
+    /// exactly. macOS-only: hiding there moves the window to a corner of the
+    /// primary display (chosen to avoid spilling onto an adjacent display)
     /// rather than minimizing it, so the original position must be remembered
     /// to move it back. `None` while visible, or for state persisted before
     /// this field existed (in which case show skips the restore).

@@ -11,7 +11,7 @@ A desktop application for Windows and macOS that allows users to group applicati
 | Framework | Tauri v2 | Battle-tested tray, global hotkeys, and permissions; webview UI handles layout well |
 | Backend | Rust | Platform window management, hotkey handling, state |
 | Frontend | Svelte 5 + TypeScript | Compiles to vanilla JS (no runtime overhead), clean reactivity with runes, `svelte-dnd-action` for drag-and-drop |
-| macOS windowing | `AXPosition` move via Accessibility API | Hide by moving the window to 1px inside the primary display's bottom-right corner (so macOS's position clamp leaves only that 1px sliver on screen); restore the captured original position to show. Public API, no minimize animation or Dock thumbnail. Technique adapted from AeroSpace's `hideInCorner`. |
+| macOS windowing | `AXPosition` move via Accessibility API | Hide by moving the window to 1px inside a corner of the primary display — bottom-right, or bottom-left when that would spill the window onto an adjacent display — so macOS's position clamp leaves only that 1px sliver on screen; restore the captured original position to show. Public API, no minimize animation or Dock thumbnail. Technique adapted from AeroSpace's `hideInCorner`/`layoutWorkspaces`. |
 | Windows windowing | `ShowWindow(hwnd, SW_HIDE/SW_SHOW)` via `windows` crate | Clean, native |
 | Global hotkeys | `tauri-plugin-global-shortcut` | Cross-platform, first-class Tauri support |
 | Persistence | JSON file via `serde` + `tauri::AppHandle::path` | Simple; no embedded DB needed yet |
@@ -68,8 +68,10 @@ WindowRef {
 1. Set `WindowRef.hidden` — the "currently hidden by us" marker.
 2. Hide it: on Windows, `ShowWindow(SW_HIDE)` (restores position/size natively
    on show, so nothing is captured). On macOS, capture the window's current
-   `AXPosition` into `WindowRef.hidden_pos`, then set `AXPosition` to a fixed
-   point 1px inside the primary display's bottom-right corner.
+   `AXPosition` into `WindowRef.hidden_pos`, then set `AXPosition` to a point
+   1px inside a corner of the primary display — bottom-right by default, or
+   bottom-left when another display sits to the right of or below the primary
+   one and bottom-right would spill the window onto it.
 
 ### Show a window
 1. Un-hide it: on Windows, `ShowWindow(SW_SHOW)`. On macOS, set `AXPosition`
@@ -88,19 +90,25 @@ the meantime. So each window's front-to-back stacking rank is still captured
 after all windows are moved back, the previously-frontmost one is raised
 (`AXRaise` + app `AXFrontmost`) to reinstate it as the top window.
 
-> **macOS note:** hiding moves the window (`AXPosition`) to 1px inside the
-> primary display's bottom-right corner rather than minimizing it. macOS
-> clamps window positions so some pixel stays on screen; placing only the
-> window's top-left corner near the display edge means that clamped pixel is
-> the 1px corner sliver, not a visible edge. Public API
-> (`AXPosition`/`AXValue`), no minimize animation, no Dock thumbnail —
-> adapted from the AeroSpace tiling window manager's `hideInCorner`. Trade-offs:
-> that 1px sliver is technically still on screen (not truly invisible, though
-> unnoticeable in practice), and because the window is never minimized, it
-> keeps its normal window-server state — an unexpected activation path (e.g.
-> Cmd-Tab to the owning app) could still bring it to the front. See
-> [wm/macos.rs](src-tauri/src/wm/macos.rs) `hide_window`/`show_window` for
-> the full rationale.
+> **macOS note:** hiding moves the window (`AXPosition`) to 1px inside a
+> corner of the primary display rather than minimizing it. The corner is
+> chosen to avoid spilling onto an adjacent display: since only the window's
+> top-left corner is placed there, (almost) the entire window body extends
+> off-screen in one direction from it, and on a multi-monitor setup that
+> direction can be a neighbouring display rather than empty space. A
+> probe-and-count heuristic (adapted from AeroSpace's `layoutWorkspaces`)
+> picks bottom-right or bottom-left accordingly, defaulting to bottom-right on
+> a single-display setup. macOS clamps window positions so some pixel stays on
+> screen; placing only the window's top-left corner near the display edge
+> means that clamped pixel is the 1px corner sliver, not a visible edge.
+> Public API (`AXPosition`/`AXValue`), no minimize animation, no Dock
+> thumbnail — adapted from the AeroSpace tiling window manager's
+> `hideInCorner`. Trade-offs: that 1px sliver is technically still on screen
+> (not truly invisible, though unnoticeable in practice), and because the
+> window is never minimized, it keeps its normal window-server state — an
+> unexpected activation path (e.g. Cmd-Tab to the owning app) could still
+> bring it to the front. See [wm/macos.rs](src-tauri/src/wm/macos.rs)
+> `hide_window`/`show_window`/`hide_target` for the full rationale.
 
 ### Context visibility rule
 A window is **visible** if and only if at least one of its Contexts is currently visible.

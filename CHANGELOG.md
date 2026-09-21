@@ -26,7 +26,7 @@ How to cut a release:
 
 ### Changed
 
-- On macOS, hiding a window no longer minimizes it. It's now moved 1px inside the primary display's bottom-right corner instead — a public-API technique adapted from the AeroSpace tiling window manager — so hiding no longer plays the minimize "genie" animation or leaves a Dock thumbnail. A ~1px sliver of the window technically remains on screen at that corner, and because the window is never minimized, an unexpected activation path (e.g. Cmd-Tab to the owning app) could still bring it to the front. ([#114](https://github.com/conveen/context-manager/pull/114))
+- On macOS, hiding a window no longer minimizes it. It's now moved 1px inside a corner of the primary display instead — a public-API technique adapted from the AeroSpace tiling window manager, with the corner (bottom-right or bottom-left) chosen to avoid spilling the window onto an adjacent display on multi-monitor setups — so hiding no longer plays the minimize "genie" animation or leaves a Dock thumbnail. A ~1px sliver of the window technically remains on screen at that corner, and because the window is never minimized, an unexpected activation path (e.g. Cmd-Tab to the owning app) could still bring it to the front. ([#114](https://github.com/conveen/context-manager/pull/114))
 
 ## [v0.1.2] - 2026-08-11
 

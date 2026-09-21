@@ -217,11 +217,15 @@ pub fn request_screen_recording_access() {
 // ---------------------------------------------------------------------------
 //
 // Technique ported from the AeroSpace tiling window manager's `hideInCorner`/
-// `unhideFromCorner` (`Sources/AppBundle/tree/MacWindow.swift`, upstream commit
-// `0431b6b4cfe8ec9afa6cac72f08777b667f00efc`):
+// `unhideFromCorner` (`Sources/AppBundle/tree/MacWindow.swift`) and its
+// multi-monitor "optimal corner" selection (`layoutWorkspaces`,
+// `Sources/AppBundle/layout/refresh.swift`), upstream commit
+// `0431b6b4cfe8ec9afa6cac72f08777b667f00efc`:
 // https://raw.githubusercontent.com/nikitabobko/AeroSpace/0431b6b4cfe8ec9afa6cac72f08777b667f00efc/Sources/AppBundle/tree/MacWindow.swift
+// https://raw.githubusercontent.com/nikitabobko/AeroSpace/0431b6b4cfe8ec9afa6cac72f08777b667f00efc/Sources/AppBundle/layout/refresh.swift
 // simplified for this project's needs (see the doc comments on
-// `hide_window`/`show_window` below for the full rationale and trade-offs).
+// `hide_window`/`show_window`/`hide_target` below for the full rationale and
+// trade-offs).
 
 // Bindings to the AX functions we need from `ApplicationServices.framework`.
 // All AX object types (`AXUIElementRef`, `AXValueRef`) are `CFTypeRef` aliases
@@ -248,9 +252,18 @@ extern "C" {
     fn AXUIElementPerformAction(element: CFTypeRef, action: CFTypeRef) -> i32;
 
     /// Reads the boxed value out of an `AXValueRef` (e.g. a `kAXValueCGPointType`
-    /// box) into `value_ptr`. Returns `true` on success. `the_type` is an
+    /// box) into `value_ptr`. Returns nonzero on success. `the_type` is an
     /// `AXValueType` (a C enum, passed as `u32`); `value` is an `AXValueRef`.
-    fn AXValueGetValue(value: CFTypeRef, the_type: u32, value_ptr: *mut std::ffi::c_void) -> bool;
+    ///
+    /// Bound as `u8`, not `bool`: the real signature returns Apple's
+    /// `Boolean`, which is C99 `unsigned char`, not `_Bool`. Rust's `bool` has
+    /// exactly two valid bit patterns (0/1); receiving anything else from C
+    /// would be undefined behaviour, so callers compare the `u8` against `0`
+    /// instead of trusting it to already be a valid `bool`. (This is distinct
+    /// from `CGPreflightScreenCaptureAccess`/`CGRequestScreenCaptureAccess`
+    /// above, which are legitimately declared `bool` in the CoreGraphics
+    /// headers.)
+    fn AXValueGetValue(value: CFTypeRef, the_type: u32, value_ptr: *mut std::ffi::c_void) -> u8;
 
     /// Boxes a value (e.g. a `CGPoint`) into a new `AXValueRef` of the given
     /// `AXValueType`. The caller owns the returned object (create rule).
@@ -261,16 +274,26 @@ extern "C" {
 /// Used with [`AXValueGetValue`]/[`AXValueCreate`] to marshal `AXPosition`.
 const K_AX_VALUE_CG_POINT_TYPE: u32 = 1;
 
+/// `AXValueType` for a boxed `CGSize`, from `ApplicationServices/HIServices/AXValue.h`.
+/// Used with [`AXValueGetValue`] to marshal `AXSize`.
+const K_AX_VALUE_CG_SIZE_TYPE: u32 = 2;
+
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     /// Returns the `CGDirectDisplayID` of the main (primary) display — the one
-    /// holding the menu bar. This project always targets that display's corner
-    /// for hiding; it does not track which display a window is actually on
-    /// (see [`primary_display_hide_target`]).
+    /// holding the menu bar. The window-hiding corner is always one of this
+    /// display's two bottom corners; [`choose_hide_corner`] picks between them
+    /// by checking the other active displays (see [`hide_target`]).
     fn CGMainDisplayID() -> u32;
 
     /// Returns the bounds (in global screen coordinates) of the given display.
     fn CGDisplayBounds(display: u32) -> CGRect;
+
+    /// Fills `active_displays` (capacity `max_displays`) with the
+    /// `CGDirectDisplayID` of every active display and writes the count found
+    /// to `*display_count` (always `<= max_displays`). Returns a `CGError`
+    /// integer; 0 (`kCGErrorSuccess`) on success.
+    fn CGGetActiveDisplayList(max_displays: u32, active_displays: *mut u32, display_count: *mut u32) -> i32;
 }
 
 /// Mirrors Apple's `CGPoint` (`ApplicationServices`/`CoreGraphics`): two `f64`s.
@@ -320,7 +343,7 @@ unsafe fn get_ax_position(ax_win: &CFType) -> Option<(f64, f64)> {
         K_AX_VALUE_CG_POINT_TYPE,
         &mut point as *mut CGPoint as *mut std::ffi::c_void,
     );
-    if !ok {
+    if ok == 0 {
         return None;
     }
 
@@ -355,31 +378,179 @@ unsafe fn set_ax_position(ax_win: &CFType, x: f64, y: f64) -> Result<(), String>
     Ok(())
 }
 
-/// The point a window is moved to in order to hide it: 1px up-and-left of the
-/// bottom-right corner of the *primary* display's bounds.
+/// Reads a window's current `AXSize` (width and height).
 ///
-/// Ported from AeroSpace's `hideInCorner` (`.bottomRightCorner` case), which
-/// computes `monitor.visibleRect.bottomRightCorner - CGPoint(x: 1, y: 1)` —
-/// see the module doc comment for the pinned source reference. AeroSpace picks
-/// among several corners across potentially several monitors depending on
-/// window layout; this project always uses this one fixed corner of the one
-/// primary display (`CGMainDisplayID`), since it never has more than a
-/// handful of windows to hide and doesn't tile across monitors.
-///
-/// Because only the window's top-left corner is placed near this point,
-/// virtually the entire window extends past the display's bottom-right edge —
-/// macOS's clamp (which keeps *some* pixel of an "on-screen" window inside a
-/// display) then guarantees only that 1px corner remains visible, at a
-/// location nobody looks. Unlike `AXMinimized`, this never resizes the
-/// window and is a pure `AXPosition` write.
+/// Returns `None` if the attribute cannot be read or is not the expected
+/// `CGSize`-boxed `AXValue`. Used by [`hide_target`] to compute the
+/// bottom-left hiding corner, whose position depends on the window's width.
 ///
 /// # Safety
-/// Calls into CoreGraphics (`CGMainDisplayID`/`CGDisplayBounds`), which are
-/// safe to call from any thread and never fail (an invalid/absent display
-/// simply yields `CGRectZero`).
-unsafe fn primary_display_hide_target() -> (f64, f64) {
-    let bounds = CGDisplayBounds(CGMainDisplayID());
-    (bounds.origin.x + bounds.size.width - 1.0, bounds.origin.y + bounds.size.height - 1.0)
+/// Calls into the macOS Accessibility C API. `ax_win` must be a live
+/// `AXUIElement` (as returned by `find_ax_window`).
+unsafe fn get_ax_size(ax_win: &CFType) -> Option<(f64, f64)> {
+    let attr_size = CFString::new("AXSize");
+    let mut size_raw: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(ax_win.as_CFTypeRef(), attr_size.as_CFTypeRef(), &mut size_raw);
+    if err != 0 || size_raw.is_null() {
+        return None;
+    }
+    // wrap_under_create_rule: we own the returned AXValue.
+    let size_val = CFType::wrap_under_create_rule(size_raw);
+
+    let mut size = CGSize { width: 0.0, height: 0.0 };
+    let ok = AXValueGetValue(
+        size_val.as_CFTypeRef(),
+        K_AX_VALUE_CG_SIZE_TYPE,
+        &mut size as *mut CGSize as *mut std::ffi::c_void,
+    );
+    if ok == 0 {
+        return None;
+    }
+
+    Some((size.width, size.height))
+}
+
+/// Which of the primary display's two bottom corners a window is hidden in.
+/// See [`choose_hide_corner`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HideCorner {
+    BottomLeft,
+    BottomRight,
+}
+
+/// Maximum number of active displays probed by [`active_display_bounds`].
+/// Generous headroom over any realistic multi-monitor setup; a system with
+/// more displays than this simply has the extras ignored by the corner-choice
+/// heuristic in [`choose_hide_corner`] — irrelevant in practice at this cap,
+/// though in principle an ignored display could be the one that would have
+/// changed the corner choice.
+const MAX_DISPLAYS: usize = 16;
+
+/// Returns the bounds (`CGDisplayBounds`) of every currently active display.
+///
+/// Uses a fixed-size stack array sized by [`MAX_DISPLAYS`] rather than the
+/// two-call (count-then-fill) `CGGetActiveDisplayList` idiom, since that cap
+/// comfortably exceeds any real setup this project needs to handle.
+///
+/// # Safety
+/// Calls into CoreGraphics (`CGGetActiveDisplayList`/`CGDisplayBounds`), which
+/// are safe to call from any thread.
+unsafe fn active_display_bounds() -> Vec<CGRect> {
+    let mut ids = [0u32; MAX_DISPLAYS];
+    let mut count: u32 = 0;
+    let err = CGGetActiveDisplayList(MAX_DISPLAYS as u32, ids.as_mut_ptr(), &mut count);
+    if err != 0 {
+        return Vec::new();
+    }
+    let count = (count as usize).min(MAX_DISPLAYS);
+    ids[..count].iter().map(|&id| CGDisplayBounds(id)).collect()
+}
+
+/// Whether `point` lies within `bounds`, matching `CGRectContainsPoint`'s
+/// half-open semantics (the min edges are inside the rect, the max edges are
+/// not).
+fn rect_contains(bounds: &CGRect, point: (f64, f64)) -> bool {
+    point.0 >= bounds.origin.x
+        && point.0 < bounds.origin.x + bounds.size.width
+        && point.1 >= bounds.origin.y
+        && point.1 < bounds.origin.y + bounds.size.height
+}
+
+/// Picks which of the primary display's bottom corners to hide a window in,
+/// so the window's body doesn't spill onto a neighbouring display arranged to
+/// the right of or below the primary one.
+///
+/// Only the window's top-left corner is placed at the chosen point, so
+/// (almost) the entire window body extends off-screen in one direction from
+/// it — rightward from the bottom-right corner, leftward from the bottom-left
+/// one (see [`hide_target`]). If another display happens to sit in that
+/// direction, the window renders fully visible there instead of being
+/// hidden — a real bug on any multi-monitor setup with a display to the
+/// right of or below the primary.
+///
+/// Ported from AeroSpace's `layoutWorkspaces` (see the module doc comment for
+/// the pinned source reference): three probe points are cast just outside
+/// each candidate corner — along the bottom edge, up the side edge, and
+/// diagonally past the corner — and checked against every active display's
+/// bounds. The diagonal probe is weighted `IMPORTANT` (10x) since a display
+/// diagonally beyond the corner is the worst case. Whichever corner's probes
+/// land on fewer other displays is picked; ties (including the common case of
+/// a single display, where no probe lands on anything) favour the
+/// bottom-right corner, matching this project's original single-monitor
+/// behaviour exactly.
+///
+/// # Safety
+/// Calls into CoreGraphics (`CGGetActiveDisplayList`/`CGDisplayBounds`, via
+/// [`active_display_bounds`]), which is safe to call from any thread.
+unsafe fn choose_hide_corner(primary: &CGRect) -> HideCorner {
+    let displays = active_display_bounds();
+
+    let x_off = primary.size.width * 0.1;
+    let y_off = primary.size.height * 0.1;
+
+    let brc = (primary.origin.x + primary.size.width, primary.origin.y + primary.size.height);
+    let blc = (primary.origin.x, primary.origin.y + primary.size.height);
+
+    // Probe points just outside each candidate corner: along the bottom edge,
+    // up/along the side edge, and diagonally past the corner (index 2 — the
+    // worst case, weighted `IMPORTANT`x below).
+    let brc_probes = [(brc.0 + 2.0, brc.1 - y_off), (brc.0 - x_off, brc.1 + 2.0), (brc.0 + 2.0, brc.1 + 2.0)];
+    let blc_probes = [(blc.0 - 2.0, blc.1 - y_off), (blc.0 + x_off, blc.1 + 2.0), (blc.0 - 2.0, blc.1 + 2.0)];
+
+    const IMPORTANT: u32 = 10;
+    const WEIGHTS: [u32; 3] = [1, 1, IMPORTANT];
+
+    let score = |probes: [(f64, f64); 3]| -> u32 {
+        probes
+            .iter()
+            .zip(WEIGHTS)
+            .map(|(&p, w)| w * displays.iter().filter(|d| rect_contains(d, p)).count() as u32)
+            .sum()
+    };
+
+    if score(blc_probes) < score(brc_probes) {
+        HideCorner::BottomLeft
+    } else {
+        HideCorner::BottomRight
+    }
+}
+
+/// The point a window is moved to in order to hide it: 1px inside a corner of
+/// the primary display's bounds, chosen by [`choose_hide_corner`] so the
+/// window's body doesn't spill onto a neighbouring display.
+///
+/// Ported from AeroSpace's `hideInCorner` — see the module doc comment for
+/// the pinned source reference:
+/// - Bottom-right corner: `monitor.visibleRect.bottomRightCorner - CGPoint(x:
+///   1, y: 1)`. As before, virtually the entire window extends past the
+///   display's right and bottom edges; macOS's clamp (which keeps *some*
+///   pixel of an "on-screen" window inside a display) then guarantees only a
+///   1px sliver remains visible, at a location nobody looks.
+/// - Bottom-left corner: `monitor.visibleRect.bottomLeftCorner + CGPoint(x:
+///   1, y: -1) + CGPoint(x: -windowWidth, y: 0)` — the window's *width* is
+///   subtracted so its body extends left off-screen instead, which requires
+///   reading `AXSize` via `ax_win`. If that read fails, this falls back to
+///   the bottom-right corner (which needs only the display bounds),
+///   mirroring AeroSpace's own `fallthrough` on that path.
+///
+/// Unlike `AXMinimized`, this never resizes the window and is a pure
+/// `AXPosition` write.
+///
+/// # Safety
+/// Calls into CoreGraphics (`CGMainDisplayID`/`CGDisplayBounds`, via
+/// [`choose_hide_corner`]) and the Accessibility API (via [`get_ax_size`]),
+/// all safe to call from any thread. `ax_win` must be a live `AXUIElement`.
+unsafe fn hide_target(ax_win: &CFType) -> (f64, f64) {
+    let primary = CGDisplayBounds(CGMainDisplayID());
+    let bottom_right = (primary.origin.x + primary.size.width - 1.0, primary.origin.y + primary.size.height - 1.0);
+
+    match choose_hide_corner(&primary) {
+        HideCorner::BottomRight => bottom_right,
+        HideCorner::BottomLeft => match get_ax_size(ax_win) {
+            Some((width, _height)) => (primary.origin.x + 1.0 - width, primary.origin.y + primary.size.height - 1.0),
+            None => bottom_right,
+        },
+    }
 }
 
 /// Returns the `AXUIElement` for the first window whose `AXTitle` matches
@@ -444,9 +615,18 @@ unsafe fn find_ax_window(pid: u32, title: &str) -> Option<CFType> {
 ///
 /// Hides the window by moving it, not by minimizing it: captures its current
 /// `AXPosition` (so `show_window` can restore the exact point later), then
-/// sets `AXPosition` to [`primary_display_hide_target`] — 1px up-and-left of
-/// the primary display's bottom-right corner. See that function's doc comment
-/// for why this reliably pushes the window almost entirely off-screen.
+/// sets `AXPosition` to [`hide_target`] — 1px inside a corner of the primary
+/// display, chosen so the window's body doesn't spill onto a neighbouring
+/// display. See that function's doc comment for why this reliably pushes the
+/// window almost entirely off-screen.
+///
+/// Idempotent for the same reason `show_window` is (see its guard below): if
+/// `window.hidden` is already `true`, this returns `Ok(())` immediately
+/// without re-capturing `AXPosition`. Capturing again would read back the
+/// *hiding corner* as the "original" position, permanently stranding the
+/// window there with no way to restore it — AeroSpace's `hideInCorner` guards
+/// against the same thing, for the same reason (see its `isHiddenInCorner`
+/// check).
 ///
 /// This replaces the previous `AXMinimized`-based mechanism. Trade-offs versus
 /// minimizing:
@@ -464,8 +644,14 @@ unsafe fn find_ax_window(pid: u32, title: &str) -> Option<CFType> {
 /// - Window not found via the Accessibility API (wrong PID/title, or
 ///   Accessibility permission not granted).
 /// - The current `AXPosition` cannot be read, or the new `AXPosition` cannot
-///   be set. Either failure reverts the hidden marker so a retry is possible.
+///   be set (e.g. a fullscreen or system window that doesn't support
+///   repositioning). Either failure reverts the hidden marker so a retry is
+///   possible.
 pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
+    if window.hidden {
+        return Ok(()); // already hidden
+    }
+
     unsafe {
         let ax_win = find_ax_window(window.pid, &window.window_title).ok_or_else(|| {
             format!(
@@ -484,11 +670,14 @@ pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
         window.hidden = true;
         window.hidden_pos = Some(original_pos);
 
-        let (target_x, target_y) = primary_display_hide_target();
+        let (target_x, target_y) = hide_target(&ax_win);
         if let Err(e) = set_ax_position(&ax_win, target_x, target_y) {
             window.hidden = false;
             window.hidden_pos = None;
-            return Err(format!("failed to move window into hiding corner: {e}"));
+            return Err(format!(
+                "failed to move window into hiding corner: {e} — \
+                 window may be fullscreen or a system window that doesn't support repositioning"
+            ));
         }
 
         Ok(())

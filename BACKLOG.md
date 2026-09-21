@@ -185,12 +185,13 @@ Handling.
 ### Animation-free window hiding on macOS
 **Resolved.** Hiding on macOS ([wm/macos.rs](src-tauri/src/wm/macos.rs)) no
 longer uses `AXMinimized`. It now moves the window's `AXPosition` to 1px
-inside the primary display's bottom-right corner (restoring the captured
-original position on show), a technique adapted from the AeroSpace tiling
-window manager's `hideInCorner`. Public API, no genie animation, no Dock
-thumbnail. Trade-offs (a ~1px on-screen sliver at the corner; the window is
-never minimized, so unexpected activation paths could still surface it) are
-documented in [DESIGN.md](DESIGN.md) and the window's doc comments.
+inside a corner of the primary display — chosen to avoid spilling onto an
+adjacent display on multi-monitor setups — restoring the captured original
+position on show. Technique adapted from the AeroSpace tiling window
+manager's `hideInCorner`/`layoutWorkspaces`. Public API, no genie animation,
+no Dock thumbnail. Trade-offs (a ~1px on-screen sliver at the corner; the
+window is never minimized, so unexpected activation paths could still surface
+it) are documented in [DESIGN.md](DESIGN.md) and the window's doc comments.
 ([#114](https://github.com/conveen/context-manager/pull/114))
 
 ### Context picker when entering Single Context Mode
