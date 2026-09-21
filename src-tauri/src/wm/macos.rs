@@ -254,8 +254,15 @@ extern "C" {
 ///
 /// # Limitations
 /// Title matching is exact and case-sensitive. If the window title has changed
-/// since the `WindowRef` was recorded, the lookup will fail. This is a known
-/// limitation to be addressed in a later milestone.
+/// since the `WindowRef` was recorded, the lookup will fail. This is an
+/// accepted, permanent limitation, not a milestone item: the stable
+/// alternative (mapping `AXUIElement` to its `CGWindowID` directly) requires
+/// the private, undocumented `_AXUIElementGetWindow` API, which this project
+/// avoids project-wide (see `DESIGN.md`'s macOS windowing note and
+/// `BACKLOG.md`'s animation-free-hiding entry). See issue #20 for the
+/// investigation — including AeroSpace, which relies on that same private
+/// call — that closed off a public-API fix. The ~2s poll refresh
+/// (`update_windows`) remains the mitigation.
 ///
 /// # Safety
 /// Calls into the macOS Accessibility C API.

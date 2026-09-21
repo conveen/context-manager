@@ -43,14 +43,29 @@ gap, but two narrow cases remain:
   enumeration, so its title can't be refreshed; if the app changes the title
   while minimized, the subsequent *show* lookup can miss.
 
-**Suggested fix.** Match the `AXUIElement` to its stable `CGWindowID`
+**Suggested fix — investigated, no public-API alternative found.** The
+proposed fix was to match the `AXUIElement` to its stable `CGWindowID`
 (`platform_id`) instead of its title. The direct route is the **private**
 `_AXUIElementGetWindow(AXUIElementRef, CGWindowID*)`, which this project avoids
 (fragile across releases, App Store rejection risk — see the animation-free
-hiding item below). Investigate a public-API alternative (e.g. disambiguating by
-`AXPosition`/`AXSize` against the `CGWindowList` bounds for the `platform_id`);
-if none is acceptable, document title-matching as an accepted limitation and
-keep the poll refresh as the mitigation.
+hiding item below).
+
+As part of issue #20, AeroSpace (a macOS tiling window manager with the same
+window-identity problem) was investigated as prior art. AeroSpace maps every
+`AXUIElement` to its `CGWindowID` via `_AXUIElementGetWindow` — the same
+private symbol above — and ships it from a dedicated `PrivateApi` SwiftPM
+target specifically because it isn't a public `ApplicationServices` symbol.
+Window titles are read only for display/matching purposes there, never for
+window identity. Its own bridging header carries a commented-out,
+never-implemented sketch of a `CGWindowListCopyWindowInfo`-based alternative,
+so there's no third-party evidence that a public-API disambiguation route
+(e.g. `AXPosition`/`AXSize` against `CGWindowList` bounds) is practical either.
+
+Adopting `_AXUIElementGetWindow` here would contradict this project's own
+public-API-only policy (applied consistently to the animation-free-hiding item
+below), so it's not being adopted. Title-matching plus the ~2s poll refresh is
+the accepted, permanent mitigation going forward — see the PR/comment on
+issue #20 for the full writeup.
 
 ---
 
