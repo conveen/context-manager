@@ -11,7 +11,7 @@ A desktop application for Windows and macOS that allows users to group applicati
 | Framework | Tauri v2 | Battle-tested tray, global hotkeys, and permissions; webview UI handles layout well |
 | Backend | Rust | Platform window management, hotkey handling, state |
 | Frontend | Svelte 5 + TypeScript | Compiles to vanilla JS (no runtime overhead), clean reactivity with runes, `svelte-dnd-action` for drag-and-drop |
-| macOS windowing | `AXMinimized` via Accessibility API | Minimize to hide; un-minimize to restore (restores position/size). Public API. Moving offscreen was rejected — macOS clamps window positions so an edge stays visible. |
+| macOS windowing | `AXPosition` move via Accessibility API | Hide by moving the window to 1px inside a corner of the primary display — bottom-right, or bottom-left when that would spill the window onto an adjacent display — so macOS's position clamp leaves only that 1px sliver on screen; restore the captured original position to show. Public API, no minimize animation or Dock thumbnail. Technique adapted from AeroSpace's `hideInCorner`/`layoutWorkspaces`. |
 | Windows windowing | `ShowWindow(hwnd, SW_HIDE/SW_SHOW)` via `windows` crate | Clean, native |
 | Global hotkeys | `tauri-plugin-global-shortcut` | Cross-platform, first-class Tauri support |
 | Persistence | JSON file via `serde` + `tauri::AppHandle::path` | Simple; no embedded DB needed yet |
@@ -65,26 +65,50 @@ WindowRef {
 ## Visibility Logic
 
 ### Hide a window
-1. Set `WindowRef.hidden` — the "currently hidden by us" marker. Both platforms restore geometry natively on show, so no position is captured.
-2. Hide it: set `AXMinimized = true` (macOS) or `ShowWindow(SW_HIDE)` (Windows).
+1. Set `WindowRef.hidden` — the "currently hidden by us" marker.
+2. Hide it: on Windows, `ShowWindow(SW_HIDE)` (restores position/size natively
+   on show, so nothing is captured). On macOS, capture the window's current
+   `AXPosition` into `WindowRef.hidden_pos`, then set `AXPosition` to a point
+   1px inside a corner of the primary display — bottom-right by default, or
+   bottom-left when another display sits to the right of or below the primary
+   one and bottom-right would spill the window onto it.
 
 ### Show a window
-1. Un-hide it: set `AXMinimized = false` (macOS, which restores the previous position and size) or `ShowWindow(SW_SHOW)` (Windows).
-2. Clear `hidden`.
+1. Un-hide it: on Windows, `ShowWindow(SW_SHOW)`. On macOS, set `AXPosition`
+   back to the captured `WindowRef.hidden_pos` (skipped if absent — e.g. state
+   persisted before this field existed).
+2. Clear `hidden` (and `hidden_pos` on macOS).
 
-**macOS z-order restoration:** when hiding, each window's front-to-back stacking
-rank is captured (`WindowRef.hidden_z`) from the `CGWindowList` order (which is
-front-to-back). On show, the Context's windows are un-minimized **back-to-front**
-so the previously-frontmost window is un-minimized last, and it is then
-explicitly raised (`AXRaise` + app `AXFrontmost`) — reinstating the window that
-was on top before the Context was hidden. This restores order among the
-Context's own windows; windows outside the Context keep their place.
+**macOS z-order restoration:** moving a window's position does not change its
+place in the window stack, so windows hidden this way keep their relative
+z-order among themselves automatically — no restoration is needed for that.
+What position-move *doesn't* preserve is which window was frontmost: once
+every window in a Context is un-hidden, the one that was on top before hiding
+needs to be explicitly reinstated, since none of them changed stacking order in
+the meantime. So each window's front-to-back stacking rank is still captured
+(`WindowRef.hidden_z`) from the `CGWindowList` order when hiding, and on show,
+after all windows are moved back, the previously-frontmost one is raised
+(`AXRaise` + app `AXFrontmost`) to reinstate it as the top window.
 
-> **macOS note:** hiding uses `AXMinimized` rather than moving the window
-> offscreen, because macOS clamps window positions so a fully-offscreen window
-> still shows an edge. Trade-off: minimizing plays the genie animation and
-> leaves a Dock thumbnail. Animation-free hiding would require private CGS
-> APIs (out of scope).
+> **macOS note:** hiding moves the window (`AXPosition`) to 1px inside a
+> corner of the primary display rather than minimizing it. The corner is
+> chosen to avoid spilling onto an adjacent display: since only the window's
+> top-left corner is placed there, (almost) the entire window body extends
+> off-screen in one direction from it, and on a multi-monitor setup that
+> direction can be a neighbouring display rather than empty space. A
+> probe-and-count heuristic (adapted from AeroSpace's `layoutWorkspaces`)
+> picks bottom-right or bottom-left accordingly, defaulting to bottom-right on
+> a single-display setup. macOS clamps window positions so some pixel stays on
+> screen; placing only the window's top-left corner near the display edge
+> means that clamped pixel is the 1px corner sliver, not a visible edge.
+> Public API (`AXPosition`/`AXValue`), no minimize animation, no Dock
+> thumbnail — adapted from the AeroSpace tiling window manager's
+> `hideInCorner`. Trade-offs: that 1px sliver is technically still on screen
+> (not truly invisible, though unnoticeable in practice), and because the
+> window is never minimized, it keeps its normal window-server state — an
+> unexpected activation path (e.g. Cmd-Tab to the owning app) could still
+> bring it to the front. See [wm/macos.rs](src-tauri/src/wm/macos.rs)
+> `hide_window`/`show_window`/`hide_target` for the full rationale.
 
 ### Context visibility rule
 A window is **visible** if and only if at least one of its Contexts is currently visible.

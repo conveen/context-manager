@@ -167,19 +167,6 @@ composite/screenshot of member windows), captured on context creation and
 refreshed when membership changes. Note macOS Screen Recording permission is
 required to capture window imagery.
 
-### Animation-free window hiding on macOS
-**Status:** not started
-
-Hiding on macOS now uses `AXMinimized` ([wm/macos.rs](src-tauri/src/wm/macos.rs)),
-which genuinely hides windows via a public API but plays the minimize genie
-animation and leaves a Dock thumbnail. This conflicts with the "no transition"
-goal for Single Context Mode. Truly instant, artifact-free hiding appears to
-require private CGS APIs (e.g. compositor-level alpha or moving windows to an
-off-screen Mission Control Space) — powerful but private, fragile across macOS
-releases, and an App Store rejection risk. Investigate whether an acceptable
-public-API path exists; otherwise document the animation as an accepted
-trade-off.
-
 ### macOS Accessibility permission onboarding
 **Status:** not started
 
@@ -194,6 +181,18 @@ Handling.
 ---
 
 ## Done
+
+### Animation-free window hiding on macOS
+**Resolved.** Hiding on macOS ([wm/macos.rs](src-tauri/src/wm/macos.rs)) no
+longer uses `AXMinimized`. It now moves the window's `AXPosition` to 1px
+inside a corner of the primary display — chosen to avoid spilling onto an
+adjacent display on multi-monitor setups — restoring the captured original
+position on show. Technique adapted from the AeroSpace tiling window
+manager's `hideInCorner`/`layoutWorkspaces`. Public API, no genie animation,
+no Dock thumbnail. Trade-offs (a ~1px on-screen sliver at the corner; the
+window is never minimized, so unexpected activation paths could still surface
+it) are documented in [DESIGN.md](DESIGN.md) and the window's doc comments.
+([#114](https://github.com/conveen/context-manager/pull/114))
 
 ### Context picker when entering Single Context Mode
 **Resolved.** [Settings.svelte](src/Settings.svelte) now shows a Context dropdown
