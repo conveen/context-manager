@@ -191,7 +191,7 @@ window manager's `hideInCorner`. Public API, no genie animation, no Dock
 thumbnail. Trade-offs (a ~1px on-screen sliver at the corner; the window is
 never minimized, so unexpected activation paths could still surface it) are
 documented in [DESIGN.md](DESIGN.md) and the window's doc comments.
-([#113](https://github.com/conveen/context-manager/pull/113))
+([#114](https://github.com/conveen/context-manager/pull/114))
 
 ### Context picker when entering Single Context Mode
 **Resolved.** [Settings.svelte](src/Settings.svelte) now shows a Context dropdown
