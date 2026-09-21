@@ -17,7 +17,7 @@ use crate::state::AppState;
 /// visible", evaluated against the *post-operation* membership: if it now
 /// belongs to a visible Context but is currently hidden, it is shown; if a
 /// **move** leaves it only in hidden Contexts, it is hidden. The `hidden`
-/// marker (and `hidden_z` on macOS) is then propagated to every copy.
+/// marker (and `hidden_z`/`hidden_pos` on macOS) is then propagated to every copy.
 ///
 /// When adding to a non-Main Context, the window is **moved** out of Main by
 /// default (removed from Main). Pass `copy = true` to keep it in Main as well,

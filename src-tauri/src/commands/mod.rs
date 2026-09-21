@@ -36,7 +36,7 @@ fn ctx_idx(data: &AppData, id: &str) -> Result<usize, String> {
 /// Applies `f` to every stored copy of the window identified by `platform_id`
 /// across all Contexts. A window can belong to several Contexts at once, each
 /// holding its own `WindowRef` copy, and per-window state like `hidden` (and
-/// `hidden_z` on macOS) must stay in sync across all of them.
+/// `hidden_z`/`hidden_pos` on macOS) must stay in sync across all of them.
 fn for_each_window_copy(data: &mut AppData, platform_id: u64, mut f: impl FnMut(&mut WindowRef)) {
     for ctx in &mut data.contexts {
         for w in &mut ctx.windows {
@@ -47,18 +47,22 @@ fn for_each_window_copy(data: &mut AppData, platform_id: u64, mut f: impl FnMut(
     }
 }
 
-/// Writes `src`'s hidden-state fields (`hidden`, plus `hidden_z` on macOS) to
-/// every stored copy of the same window across all Contexts, keeping
-/// per-window state consistent no matter which Context it is read from.
+/// Writes `src`'s hidden-state fields (`hidden`, plus `hidden_z`/`hidden_pos`
+/// on macOS) to every stored copy of the same window across all Contexts,
+/// keeping per-window state consistent no matter which Context it is read
+/// from.
 fn propagate_window_state(data: &mut AppData, src: &WindowRef) {
     let hidden = src.hidden;
     #[cfg(target_os = "macos")]
     let z = src.hidden_z;
+    #[cfg(target_os = "macos")]
+    let pos = src.hidden_pos;
     for_each_window_copy(data, src.platform_id, |w| {
         w.hidden = hidden;
         #[cfg(target_os = "macos")]
         {
             w.hidden_z = z;
+            w.hidden_pos = pos;
         }
     });
 }

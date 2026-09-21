@@ -113,13 +113,17 @@ pub fn request_window_access() {
 ///    current values. Window titles change over a window's lifetime (e.g.
 ///    KeePassXC appends its database/lock state), and the macOS hide/show path
 ///    looks a window up by its *current* `AXTitle` — a stale stored title makes
-///    that lookup fail, so the window silently refuses to hide. Hidden windows
-///    (absent from the enumeration) keep the title captured when they were hidden.
+///    that lookup fail, so the window silently refuses to hide. On Windows,
+///    `SW_HIDE` removes a hidden window from the enumeration, so its title is
+///    left as-is until shown again; on macOS, hiding only moves the window
+///    (see `wm::macos`), so it normally stays enumerable and its title keeps
+///    refreshing even while hidden.
 /// 2. **Removals**: any `WindowRef` whose `platform_id` is no longer present
 ///    in the live window list is removed from every Context it belongs to,
-///    *unless* it is currently hidden by us (`hidden`) — a hidden window is
-///    minimized and thus absent from the on-screen enumeration, but still
-///    exists and must remain tracked.
+///    *unless* it is currently hidden by us (`hidden`) — a hidden window can
+///    be absent from the on-screen enumeration (always on Windows via
+///    `SW_HIDE`; on macOS only in the corner-case where the enumeration
+///    happens to run mid-move), but still exists and must remain tracked.
 /// 3. **Additions**: any live window whose `platform_id` is not tracked in any
 ///    Context is added as a new `WindowRef` to the Context the user is
 ///    currently working in, as resolved by
@@ -199,9 +203,10 @@ pub fn update_windows(app: &tauri::AppHandle) {
     }
 
     // Remove closed windows from every context. Windows we have intentionally
-    // hidden are exempt: a hidden window is minimized and therefore absent
-    // from the on-screen enumeration, but it still exists and must stay
-    // tracked so it can be shown again.
+    // hidden are exempt: on Windows a hidden window (SW_HIDE) is absent from
+    // the on-screen enumeration; on macOS a corner-hidden window normally
+    // stays enumerable, but the exemption is kept regardless so it still
+    // exists and stays tracked so it can be shown again.
     for ctx in &mut data.contexts {
         let before = ctx.windows.len();
         ctx.windows.retain(|w| current_ids.contains(&w.platform_id) || w.hidden);
@@ -223,6 +228,8 @@ pub fn update_windows(app: &tauri::AppHandle) {
             hidden: false,
             #[cfg(target_os = "macos")]
             hidden_z: None,
+            #[cfg(target_os = "macos")]
+            hidden_pos: None,
         });
         changed = true;
     }
