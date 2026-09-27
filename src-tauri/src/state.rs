@@ -38,6 +38,15 @@ pub struct WindowRef {
     #[cfg(target_os = "macos")]
     #[serde(default)]
     pub hidden_z: Option<u32>,
+    /// Pre-hide `AXPosition` (top-left corner, in global screen coordinates),
+    /// captured when the window is hidden via [`WindowControlMode::Hide`] so
+    /// `show_window` can restore it exactly. `None` while visible, or if the
+    /// window was hidden via [`WindowControlMode::Minimize`] instead (which
+    /// restores geometry natively) — `show_window` uses exactly this to tell
+    /// the two hide mechanisms apart when un-hiding.
+    #[cfg(target_os = "macos")]
+    #[serde(default)]
+    pub hidden_pos: Option<(f64, f64)>,
 }
 
 /// A named group of windows that can be shown or hidden together.
@@ -151,6 +160,28 @@ pub enum ScreenRecordingStatus {
     NotInEffect,
 }
 
+/// macOS-only: which mechanism hiding a window uses. Ignored on Windows,
+/// which always uses `ShowWindow(SW_HIDE)` — the field lives in `Settings`
+/// on both platforms anyway (kept simple and uniform), but only macOS reads it.
+///
+/// # Invariants
+/// - `show_window` does not read this: it infers the right un-hide mechanism
+///   from whether `WindowRef.hidden_pos` is set, so changing this setting
+///   never strands an already-hidden window (see `wm::macos`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub enum WindowControlMode {
+    /// Move the window to a screen corner (public `AXPosition` API). No
+    /// minimize animation, no Dock thumbnail. Default. Conflicts with tiling
+    /// window managers (AeroSpace, yabai, etc.), which re-tile the window
+    /// back the instant its position changes — use `Minimize` if running one.
+    #[default]
+    Hide,
+    /// Minimize via `AXMinimized`. Plays the genie animation and leaves a
+    /// Dock thumbnail, but a minimized window leaves a tiling WM's tree, so
+    /// this is the mode to use alongside one.
+    Minimize,
+}
+
 /// User-configurable application settings.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Settings {
@@ -164,6 +195,10 @@ pub struct Settings {
     /// resolves to the Main Context. Only meaningful while `single_context_mode`.
     #[serde(default)]
     pub single_context_id: Option<String>,
+    /// macOS-only: which mechanism hides a window. Ignored on Windows. See
+    /// [`WindowControlMode`].
+    #[serde(default)]
+    pub window_control_mode: WindowControlMode,
 }
 
 /// The full persisted application state: all Contexts and user settings.
@@ -278,7 +313,12 @@ impl Default for AppData {
                 order: 0,
                 visible: true,
             }],
-            settings: Settings { meta_key: MetaKey::default(), single_context_mode: false, single_context_id: None },
+            settings: Settings {
+                meta_key: MetaKey::default(),
+                single_context_mode: false,
+                single_context_id: None,
+                window_control_mode: WindowControlMode::default(),
+            },
         }
     }
 }

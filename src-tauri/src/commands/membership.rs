@@ -17,7 +17,7 @@ use crate::state::AppState;
 /// visible", evaluated against the *post-operation* membership: if it now
 /// belongs to a visible Context but is currently hidden, it is shown; if a
 /// **move** leaves it only in hidden Contexts, it is hidden. The `hidden`
-/// marker (and `hidden_z` on macOS) is then propagated to every copy.
+/// marker (and `hidden_z`/`hidden_pos` on macOS) is then propagated to every copy.
 ///
 /// When adding to a non-Main Context, the window is **moved** out of Main by
 /// default (removed from Main). Pass `copy = true` to keep it in Main as well,
@@ -45,7 +45,7 @@ pub fn add_window_to_context(
     // whether the window should be shown or hidden after the operation, using
     // the post-operation membership (in the target Context; out of Main if this
     // is a move) against the "visible iff any Context is visible" rule.
-    let (mut win_clone, should_show, should_hide) = {
+    let (mut win_clone, should_show, should_hide, mode) = {
         let mut data = state.data.lock().unwrap();
         let ci = ctx_idx(&data, &context_id)?;
         if data.contexts[ci].windows.iter().any(|w| w.platform_id == platform_id) {
@@ -70,16 +70,17 @@ pub fn add_window_to_context(
             });
         let was_hidden = win.hidden;
         let should_hide = !was_hidden && !will_be_visible;
+        let mode = data.settings.window_control_mode;
 
         // Optimistically mark the window hidden before releasing the lock (see
         // the function doc comment); the write-back below finalizes or reverts.
         if should_hide {
             for_each_window_copy(&mut data, platform_id, |w| w.hidden = true);
         }
-        (win, was_hidden && will_be_visible, should_hide)
+        (win, was_hidden && will_be_visible, should_hide, mode)
     };
 
-    reconcile_window_visibility(&mut win_clone, should_show, should_hide, "add_window_to_context");
+    reconcile_window_visibility(&mut win_clone, should_show, should_hide, mode, "add_window_to_context");
 
     // Re-acquire to persist the membership and propagate any hidden-state
     // change. On the hide path this confirms the optimistic marker, or —
@@ -135,7 +136,7 @@ pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, pla
     let state = app.state::<AppState>();
 
     // Collect info before OS call: window's current state and its contexts after removal.
-    let (mut win_clone, should_show, should_hide, readd_to_main) = {
+    let (mut win_clone, should_show, should_hide, readd_to_main, mode) = {
         let mut data = state.data.lock().unwrap();
         let ci = ctx_idx(&data, &context_id)?;
 
@@ -181,6 +182,7 @@ pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, pla
 
         let should_show = was_hidden && will_be_visible;
         let should_hide = !was_hidden && !will_be_visible && !belongs_nowhere;
+        let mode = data.settings.window_control_mode;
 
         // Optimistically mark the window hidden before releasing the lock (see
         // the function doc comment); the write-back below finalizes or reverts.
@@ -188,10 +190,10 @@ pub fn remove_window_from_context(app: tauri::AppHandle, context_id: String, pla
             for_each_window_copy(&mut data, platform_id, |w| w.hidden = true);
         }
 
-        (win, should_show, should_hide, readd_to_main)
+        (win, should_show, should_hide, readd_to_main, mode)
     };
 
-    reconcile_window_visibility(&mut win_clone, should_show, should_hide, "remove_window_from_context");
+    reconcile_window_visibility(&mut win_clone, should_show, should_hide, mode, "remove_window_from_context");
 
     // Re-acquire lock and apply the removal.
     let mut data = state.data.lock().unwrap();

@@ -25,7 +25,7 @@ pub use visibility::handle_shortcut;
 
 use tauri::Manager;
 
-use crate::state::{AppData, AppState, WindowRef};
+use crate::state::{AppData, AppState, WindowControlMode, WindowRef};
 use crate::wm;
 
 /// Returns the index of the context with the given `id` in `data.contexts`.
@@ -36,7 +36,7 @@ fn ctx_idx(data: &AppData, id: &str) -> Result<usize, String> {
 /// Applies `f` to every stored copy of the window identified by `platform_id`
 /// across all Contexts. A window can belong to several Contexts at once, each
 /// holding its own `WindowRef` copy, and per-window state like `hidden` (and
-/// `hidden_z` on macOS) must stay in sync across all of them.
+/// `hidden_z`/`hidden_pos` on macOS) must stay in sync across all of them.
 fn for_each_window_copy(data: &mut AppData, platform_id: u64, mut f: impl FnMut(&mut WindowRef)) {
     for ctx in &mut data.contexts {
         for w in &mut ctx.windows {
@@ -47,18 +47,25 @@ fn for_each_window_copy(data: &mut AppData, platform_id: u64, mut f: impl FnMut(
     }
 }
 
-/// Writes `src`'s hidden-state fields (`hidden`, plus `hidden_z` on macOS) to
-/// every stored copy of the same window across all Contexts, keeping
-/// per-window state consistent no matter which Context it is read from.
+/// Writes `src`'s hidden-state fields (`hidden`, plus `hidden_z`/`hidden_pos`
+/// on macOS) to every stored copy of the same window across all Contexts,
+/// keeping per-window state consistent no matter which Context it is read
+/// from. Syncing `hidden_pos` matters: without it, a window in multiple
+/// Contexts would lose the position `hide_window` captured on write-back, and
+/// `show_window` would strand it in the corner next time it is un-hidden from
+/// a different Context's copy.
 fn propagate_window_state(data: &mut AppData, src: &WindowRef) {
     let hidden = src.hidden;
     #[cfg(target_os = "macos")]
     let z = src.hidden_z;
+    #[cfg(target_os = "macos")]
+    let pos = src.hidden_pos;
     for_each_window_copy(data, src.platform_id, |w| {
         w.hidden = hidden;
         #[cfg(target_os = "macos")]
         {
             w.hidden_z = z;
+            w.hidden_pos = pos;
         }
     });
 }
@@ -74,10 +81,17 @@ fn current_z_rank(platform_id: u64) -> Option<u32> {
 
 /// Reconciles a window's physical visibility outside the lock, shared by the
 /// two membership commands: shows the window when `should_show`, hides it
-/// (capturing the current stacking rank first, on macOS) when `should_hide`.
-/// Mutates `win_clone`'s hidden-state fields for the caller to propagate; OS
-/// errors are printed with `caller` for context and otherwise ignored.
-fn reconcile_window_visibility(win_clone: &mut WindowRef, should_show: bool, should_hide: bool, caller: &str) {
+/// with `mode` (capturing the current stacking rank first, on macOS) when
+/// `should_hide`. Mutates `win_clone`'s hidden-state fields for the caller to
+/// propagate; OS errors are printed with `caller` for context and otherwise
+/// ignored.
+fn reconcile_window_visibility(
+    win_clone: &mut WindowRef,
+    should_show: bool,
+    should_hide: bool,
+    mode: WindowControlMode,
+    caller: &str,
+) {
     if should_show {
         if let Err(e) = wm::show_window(win_clone) {
             eprintln!("{caller} show_window({}): {e}", win_clone.platform_id);
@@ -93,7 +107,7 @@ fn reconcile_window_visibility(win_clone: &mut WindowRef, should_show: bool, sho
         {
             win_clone.hidden_z = current_z_rank(win_clone.platform_id);
         }
-        if let Err(e) = wm::hide_window(win_clone) {
+        if let Err(e) = wm::hide_window(win_clone, mode) {
             eprintln!("{caller} hide_window({}): {e}", win_clone.platform_id);
         }
     }
@@ -135,7 +149,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
 
     // Phase 1 — collect under lock, then optimistically mark the targets
     // hidden before releasing the lock (see function doc comment).
-    let hide_targets: Vec<WindowRef> = {
+    let (hide_targets, mode): (Vec<WindowRef>, WindowControlMode) = {
         let mut data = state.data.lock().unwrap();
         let ci = match ctx_idx(&data, ctx_id) {
             Ok(i) => i,
@@ -144,6 +158,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
                 return;
             },
         };
+        let mode = data.settings.window_control_mode;
         let targets: Vec<WindowRef> = data.contexts[ci]
             .windows
             .iter()
@@ -160,7 +175,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
             for_each_window_copy(&mut data, t.platform_id, |w| w.hidden = true);
         }
 
-        targets
+        (targets, mode)
     };
 
     // Phase 2 — OS calls outside the lock
@@ -173,7 +188,7 @@ fn do_hide_context_windows(app: &tauri::AppHandle, ctx_id: &str) {
         {
             win_clone.hidden_z = z_map.get(&win_clone.platform_id).copied();
         }
-        match wm::hide_window(&mut win_clone) {
+        match wm::hide_window(&mut win_clone, mode) {
             Ok(()) => hidden.push(win_clone),
             Err(e) => {
                 eprintln!("hide_window({}): {e}", win_clone.platform_id);
