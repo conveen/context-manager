@@ -78,7 +78,7 @@ macOS has two interchangeable hide mechanisms, chosen per-window-hide by the
 `show_window` needs no mode input: which mechanism to reverse is inferred from
 whether `WindowRef.hidden_pos` is set (`Some` → was corner-hidden, `None` →
 was minimized), so changing the setting between a hide and its matching show
-never stray-owns a window — it always un-hides via whatever actually hid it.
+never strands a window — it always un-hides via whatever actually hid it.
 
 ### Hide a window
 1. Set `WindowRef.hidden` — the "currently hidden by us" marker.

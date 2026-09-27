@@ -204,7 +204,7 @@ $effect(() => {
                 <div class="setting-group">
                     <div class="setting-header">
                         <h3>Window Control Mode</h3>
-                        <p class="description">Choose how hidden windows are hidden on macOS</p>
+                        <p class="description">Choose how windows are hidden on macOS</p>
                     </div>
                     <div class="button-group">
                         <button
@@ -214,7 +214,7 @@ $effect(() => {
                             onclick={() => saveField({ window_control_mode: "Hide" })}
                         >
                             <span class="option-name">Hide</span>
-                            <span class="option-desc">Moves the window off-corner. No animation, no Dock icon.</span>
+                            <span class="option-desc">Moves the window into a screen corner. No animation, no Dock icon.</span>
                         </button>
                         <button
                             class="option-btn"
