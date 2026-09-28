@@ -24,6 +24,10 @@ How to cut a release:
 
 ## [Unreleased]
 
+### Fixed
+
+- A window closed while its Context was hidden is now removed from that Context on the next refresh, instead of lingering until you next show the Context. Previously the background poll skipped every hidden window when pruning closed ones — it could not tell "absent because we hid it" from "absent because it was closed" — so ghost entries stayed in the sidebar's counts, and survived restarts if the app they belonged to never came back. ([#120](https://github.com/conveen/context-manager/pull/120))
+
 ## [v0.1.2] - 2026-08-11
 
 ### Changed
