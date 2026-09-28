@@ -2,7 +2,9 @@ export interface WindowRef {
     platform_id: number;
     app_name: string;
     window_title: string;
-    // True while the window is hidden by us (minimized / SW_HIDE).
+    // True while the window is hidden by us (minimized / moved to a screen
+    // corner on macOS, depending on Settings.window_control_mode; SW_HIDE on
+    // Windows).
     hidden: boolean;
 }
 
@@ -22,12 +24,18 @@ export interface Context {
 // Ctrl+Alt+Cmd on macOS.
 export type MetaKey = "CtrlAlt" | "CmdOpt" | "CtrlAltSuper";
 
+// macOS-only; ignored on Windows. "Hide" moves the window to a screen corner
+// (default); "Minimize" uses the classic AXMinimized genie animation, which
+// is compatible with tiling window managers (AeroSpace, yabai, etc.).
+export type WindowControlMode = "Hide" | "Minimize";
+
 export interface Settings {
     meta_key: MetaKey;
     single_context_mode: boolean;
     // Context forced to be the only visible one in Single Context Mode.
     // null (or a stale id) resolves to the Main Context on the backend.
     single_context_id: string | null;
+    window_control_mode: WindowControlMode;
 }
 
 // Whether the OS is letting the backend read window titles. Mirrors the Rust

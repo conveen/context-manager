@@ -24,6 +24,14 @@ How to cut a release:
 
 ## [Unreleased]
 
+### Added
+
+- A `Window Control Mode` setting on macOS (Settings, macOS only) chooses how hidden windows are hidden: `Hide` moves the window to a screen corner with no animation and no Dock thumbnail, or `Minimize` uses the classic genie animation — pick `Minimize` if you also run a tiling window manager (AeroSpace, yabai, etc.), which actively fights the corner-move technique by re-tiling the window back the instant its position changes. ([#117](https://github.com/conveen/context-manager/pull/117))
+
+### Changed
+
+- On macOS, hiding a window now defaults to moving it to a screen corner instead of minimizing it, so there's no genie animation and no Dock thumbnail. Switch back to the old minimize behavior in Settings under `Window Control Mode` if this conflicts with a tiling window manager you're running. ([#117](https://github.com/conveen/context-manager/pull/117))
+
 ## [v0.1.2] - 2026-08-11
 
 ### Changed

@@ -199,6 +199,38 @@ $effect(() => {
                 </p>
             </div>
 
+            {#if !isWindows}
+                <!-- Window Control Mode (macOS only) -->
+                <div class="setting-group">
+                    <div class="setting-header">
+                        <h3>Window Control Mode</h3>
+                        <p class="description">Choose how windows are hidden on macOS</p>
+                    </div>
+                    <div class="button-group">
+                        <button
+                            class="option-btn"
+                            class:active={settings.window_control_mode === "Hide"}
+                            disabled={saving}
+                            onclick={() => saveField({ window_control_mode: "Hide" })}
+                        >
+                            <span class="option-name">Hide</span>
+                            <span class="option-desc">Moves the window into a screen corner. No animation, no Dock icon.</span>
+                        </button>
+                        <button
+                            class="option-btn"
+                            class:active={settings.window_control_mode === "Minimize"}
+                            disabled={saving}
+                            onclick={() => saveField({ window_control_mode: "Minimize" })}
+                        >
+                            <span class="option-name">Minimize</span>
+                            <span class="option-desc">
+                                Classic minimize. Use this if you also run a tiling window manager (e.g. AeroSpace).
+                            </span>
+                        </button>
+                    </div>
+                </div>
+            {/if}
+
         </div>
     {/if}
 </div>

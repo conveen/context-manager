@@ -167,19 +167,6 @@ composite/screenshot of member windows), captured on context creation and
 refreshed when membership changes. Note macOS Screen Recording permission is
 required to capture window imagery.
 
-### Animation-free window hiding on macOS
-**Status:** not started
-
-Hiding on macOS now uses `AXMinimized` ([wm/macos.rs](src-tauri/src/wm/macos.rs)),
-which genuinely hides windows via a public API but plays the minimize genie
-animation and leaves a Dock thumbnail. This conflicts with the "no transition"
-goal for Single Context Mode. Truly instant, artifact-free hiding appears to
-require private CGS APIs (e.g. compositor-level alpha or moving windows to an
-off-screen Mission Control Space) — powerful but private, fragile across macOS
-releases, and an App Store rejection risk. Investigate whether an acceptable
-public-API path exists; otherwise document the animation as an accepted
-trade-off.
-
 ### macOS Accessibility permission onboarding
 **Status:** not started
 
@@ -194,6 +181,20 @@ Handling.
 ---
 
 ## Done
+
+### Animation-free window hiding on macOS
+**Resolved.** [wm/macos.rs](src-tauri/src/wm/macos.rs) now implements two
+hide mechanisms, chosen by a new `Window Control Mode` setting
+([Settings.svelte](src/Settings.svelte)): `Hide` moves the window to 1px
+inside a corner of the primary display via the public `AXPosition` API — no
+minimize animation, no Dock thumbnail — and is the new default; `Minimize`
+keeps the original `AXMinimized` behavior. Corner-hiding alone was shipped
+first (PR #114) as an unconditional replacement for minimizing, but manual QA
+found that tiling window managers (AeroSpace, and likely yabai) run an AX
+observer that re-tiles a repositioned window straight back out of hiding,
+defeating the technique outright. Making it opt-in via the setting, with
+`Minimize` as the escape hatch for tiling-WM users, keeps the animation-free
+win for everyone else without breaking that setup. ([#117](https://github.com/conveen/context-manager/pull/117))
 
 ### Context picker when entering Single Context Mode
 **Resolved.** [Settings.svelte](src/Settings.svelte) now shows a Context dropdown
