@@ -7,6 +7,8 @@ use core_foundation::{
     string::CFString,
 };
 
+use std::collections::HashSet;
+
 use super::WindowInfo;
 use crate::state::{ScreenRecordingStatus, WindowRef};
 
@@ -25,6 +27,10 @@ extern "C" {
 }
 
 const LIST_ON_SCREEN_ONLY: u32 = 1 << 0;
+/// `kCGWindowListOptionAll` — every window, on-screen or not (minimized
+/// windows included). Used by [`live_window_ids`]; [`enumerate`] wants
+/// [`LIST_ON_SCREEN_ONLY`] instead.
+const LIST_ALL: u32 = 0;
 const NULL_WINDOW_ID: u32 = 0;
 const NORMAL_WINDOW_LAYER: i32 = 0;
 
@@ -142,6 +148,30 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
     }
 
     windows
+}
+
+/// macOS implementation of `wm::live_window_ids`.
+///
+/// Queries CoreGraphics with `kCGWindowListOptionAll` — which, unlike
+/// [`enumerate`]'s `kCGWindowListOptionOnScreenOnly`, includes minimized and
+/// otherwise off-screen windows — and collects every `kCGWindowNumber`. No
+/// layer, owner, or title filtering: the result answers only "does this window
+/// id still exist".
+///
+/// Reading `kCGWindowNumber` does not require Screen Recording permission
+/// (only `kCGWindowName` does), so this stays accurate even when [`enumerate`]
+/// is returning nothing because titles are unreadable.
+///
+/// # Returns
+/// `None` if the window list could not be read at all, which the caller treats
+/// as "liveness unknown" rather than "nothing is alive".
+pub fn live_window_ids() -> Option<HashSet<u64>> {
+    let raw = unsafe { CGWindowListCopyWindowInfo(LIST_ALL, NULL_WINDOW_ID) };
+    if raw.is_null() {
+        return None;
+    }
+    let arr: CFArray<CFDictionary<CFString, CFType>> = unsafe { CFArray::wrap_under_create_rule(raw) };
+    Some(arr.iter().filter_map(|dict| dict_i32(&dict, "kCGWindowNumber").map(|id| id as u64)).collect())
 }
 
 /// Classifies *why* [`enumerate`] came back empty: no windows are open, or

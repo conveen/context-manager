@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::System::Threading::{
@@ -82,6 +84,61 @@ unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
     data.windows.push(WindowInfo { platform_id: hwnd.0 as u64, app_name, window_title });
 
     BOOL(1)
+}
+
+/// `EnumWindows` callback that collects every enumerated `HWND` as a raw id,
+/// applying none of [`enum_callback`]'s filters.
+///
+/// # Arguments
+/// - `hwnd`: Handle to the current window being enumerated.
+/// - `lparam`: Caller-supplied value; must be a valid pointer to a `Vec<u64>`.
+///
+/// # Preconditions/Assumptions
+/// - `lparam.0` must be a non-null, correctly aligned pointer to a live
+///   `Vec<u64>` for the entire duration of the `EnumWindows` call. Violating
+///   this is undefined behaviour.
+///
+/// # Invariants
+/// - Always returns `BOOL(1)` to continue enumeration; never aborts early, so
+///   an `Err` from `EnumWindows` means a genuine failure rather than an
+///   early stop.
+unsafe extern "system" fn live_id_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let ids = &mut *(lparam.0 as *mut Vec<u64>);
+    ids.push(hwnd.0 as u64);
+    BOOL(1)
+}
+
+/// Windows implementation of `wm::live_window_ids`.
+///
+/// `EnumWindows` visits every top-level window regardless of visibility — the
+/// `IsWindowVisible`/`WS_CAPTION`/title filtering that hides `SW_HIDE`n
+/// windows lives in [`enum_callback`], not in the OS call — so a window we
+/// have hidden still appears here, while a destroyed one does not. That is
+/// exactly the distinction the poll's removal pass needs.
+///
+/// Cheaper per window than [`enumerate`], which additionally calls
+/// `GetWindowTextW` and opens the owning process for each hit.
+///
+/// # Returns
+/// `None` if `EnumWindows` itself failed, which the caller treats as
+/// "liveness unknown". Unlike [`enumerate`], partial results are not returned:
+/// a truncated list would read as "these windows are gone".
+///
+/// # Invariants
+/// - Ids are raw `HWND` values cast to `u64`, matching `WindowInfo::platform_id`.
+/// - The OS recycles `HWND` values after a window is destroyed, so a recycled
+///   handle can read as alive here. That keeps a stale entry tracked, which is
+///   no worse than the unconditional retention this probe replaces.
+pub fn live_window_ids() -> Option<HashSet<u64>> {
+    let mut ids: Vec<u64> = Vec::new();
+    let result = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::EnumWindows(
+            Some(live_id_callback),
+            LPARAM(&mut ids as *mut _ as isize),
+        )
+    };
+    result.ok()?;
+    Some(ids.into_iter().collect())
 }
 
 /// Returns the executable name (without path or extension) for a given PID.
