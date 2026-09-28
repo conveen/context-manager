@@ -421,18 +421,19 @@ const MAX_DISPLAYS: usize = 16;
 /// two-call (count-then-fill) `CGGetActiveDisplayList` idiom, since that cap
 /// comfortably exceeds any real setup this project needs to handle.
 ///
-/// # Safety
-/// Calls into CoreGraphics (`CGGetActiveDisplayList`/`CGDisplayBounds`), which
-/// are safe to call from any thread.
-unsafe fn active_display_bounds() -> Vec<CGRect> {
+/// Safe despite calling CoreGraphics: `CGGetActiveDisplayList` only writes
+/// through the pointers given here (a stack array of exactly `MAX_DISPLAYS`
+/// and a local count, matching the capacity passed), and `CGDisplayBounds`
+/// takes a plain id. There is nothing for a caller to uphold.
+fn active_display_bounds() -> Vec<CGRect> {
     let mut ids = [0u32; MAX_DISPLAYS];
     let mut count: u32 = 0;
-    let err = CGGetActiveDisplayList(MAX_DISPLAYS as u32, ids.as_mut_ptr(), &mut count);
+    let err = unsafe { CGGetActiveDisplayList(MAX_DISPLAYS as u32, ids.as_mut_ptr(), &mut count) };
     if err != 0 {
         return Vec::new();
     }
     let count = (count as usize).min(MAX_DISPLAYS);
-    ids[..count].iter().map(|&id| CGDisplayBounds(id)).collect()
+    ids[..count].iter().map(|&id| unsafe { CGDisplayBounds(id) }).collect()
 }
 
 /// Whether `point` lies within `bounds`, matching `CGRectContainsPoint`'s
@@ -467,11 +468,7 @@ fn rect_contains(bounds: &CGRect, point: (f64, f64)) -> bool {
 /// the common case of a single display, where no probe lands on anything)
 /// favour the bottom-right corner, matching this project's original
 /// single-monitor behaviour exactly.
-///
-/// # Safety
-/// Calls into CoreGraphics (`CGGetActiveDisplayList`/`CGDisplayBounds`, via
-/// [`active_display_bounds`]), which is safe to call from any thread.
-unsafe fn choose_hide_corner(primary: &CGRect) -> HideCorner {
+fn choose_hide_corner(primary: &CGRect) -> HideCorner {
     let displays = active_display_bounds();
 
     let x_off = primary.size.width * 0.1;
@@ -486,16 +483,18 @@ unsafe fn choose_hide_corner(primary: &CGRect) -> HideCorner {
     let brc_probes = [(brc.0 + 2.0, brc.1 - y_off), (brc.0 - x_off, brc.1 + 2.0), (brc.0 + 2.0, brc.1 + 2.0)];
     let blc_probes = [(blc.0 - 2.0, blc.1 - y_off), (blc.0 + x_off, blc.1 + 2.0), (blc.0 - 2.0, blc.1 + 2.0)];
 
-    const IMPORTANT: u32 = 10;
-    const WEIGHTS: [u32; 3] = [1, 1, IMPORTANT];
+    // Counts rather than just testing: a point can land inside more than one
+    // display's bounds, because mirrored displays share the same bounds. That
+    // is also why the weighting below cannot be collapsed into "compare the
+    // diagonal probes, edges only as a tiebreak" — enough mirrored displays
+    // under an edge probe can outweigh a single diagonal hit.
+    let hits = |p: (f64, f64)| displays.iter().filter(|d| rect_contains(d, p)).count() as u32;
 
-    let score = |probes: [(f64, f64); 3]| -> u32 {
-        probes
-            .iter()
-            .zip(WEIGHTS)
-            .map(|(&p, w)| w * displays.iter().filter(|d| rect_contains(d, p)).count() as u32)
-            .sum()
-    };
+    // Index 2 is the diagonal probe — the worst case, since a display sitting
+    // diagonally beyond the corner takes the entire window body — so it
+    // outweighs the two edge probes.
+    const IMPORTANT: u32 = 10;
+    let score = |p: [(f64, f64); 3]| hits(p[0]) + hits(p[1]) + IMPORTANT * hits(p[2]);
 
     if score(blc_probes) < score(brc_probes) {
         HideCorner::BottomLeft
@@ -526,9 +525,9 @@ unsafe fn choose_hide_corner(primary: &CGRect) -> HideCorner {
 /// `AXPosition` write.
 ///
 /// # Safety
-/// Calls into CoreGraphics (`CGMainDisplayID`/`CGDisplayBounds`, via
-/// [`choose_hide_corner`]) and the Accessibility API (via [`get_ax_size`]),
-/// all safe to call from any thread. `ax_win` must be a live `AXUIElement`.
+/// `ax_win` must be a live `AXUIElement` (as returned by `find_ax_window`) —
+/// it is passed on to [`get_ax_size`]. The display lookups this makes along
+/// the way carry no caller obligations of their own.
 unsafe fn hide_target(ax_win: &CFType) -> (f64, f64) {
     let primary = CGDisplayBounds(CGMainDisplayID());
     let bottom_right = (primary.origin.x + primary.size.width - 1.0, primary.origin.y + primary.size.height - 1.0);
@@ -687,31 +686,30 @@ fn hide_by_corner(window: &mut WindowRef) -> Result<(), String> {
     }
 }
 
-/// Reverses [`hide_by_corner`]: restores the window's `AXPosition` to the
-/// point captured there (`window.hidden_pos`) and clears both the hidden
-/// marker and the stored position.
+/// Reverses [`hide_by_corner`]: moves the window back to `pos` — the point
+/// captured when it was hidden — and clears both the hidden marker and the
+/// stored position.
 ///
-/// If `hidden_pos` is `None` — state persisted from before this field
-/// existed, or before the position was captured — the restore is skipped
-/// (there is nothing to restore *to*) and only the hidden marker is cleared;
-/// the window is left wherever it currently is rather than erroring.
+/// The position is taken as an argument rather than read back off `window`
+/// because only [`show_window`] knows it is present: a hidden window with no
+/// stored position was hidden by [`hide_by_minimize`] (or by a build predating
+/// `hidden_pos`), and is routed to [`show_by_minimize`] instead. Passing it in
+/// makes that invariant structural — there is no "nothing to restore to" case
+/// to handle here.
 ///
 /// # Errors
 /// - Window not found via the Accessibility API.
-/// - A stored `hidden_pos` exists but `AXUIElementSetAttributeValue(AXPosition)`
-///   fails restoring it.
-fn show_by_corner(window: &mut WindowRef) -> Result<(), String> {
+/// - `AXUIElementSetAttributeValue(AXPosition)` fails restoring the position.
+fn show_by_corner(window: &mut WindowRef, pos: (f64, f64)) -> Result<(), String> {
     unsafe {
         let ax_win = find_ax_window(window.pid, &window.window_title).ok_or_else(|| {
             format!("window '{}' (pid {}) not found via Accessibility API", window.window_title, window.pid)
         })?;
 
-        if let Some((x, y)) = window.hidden_pos {
-            set_ax_position(&ax_win, x, y)?;
-        }
+        set_ax_position(&ax_win, pos.0, pos.1)?;
 
-        // Clear only after the OS call succeeds (or was skipped) so a
-        // failed restore can be retried.
+        // Clear only after the OS call succeeds so a failed restore can be
+        // retried.
         window.hidden = false;
         window.hidden_pos = None;
 
@@ -829,10 +827,9 @@ pub fn show_window(window: &mut WindowRef) -> Result<(), String> {
     if !window.hidden {
         return Ok(()); // already visible
     }
-    if window.hidden_pos.is_some() {
-        show_by_corner(window)
-    } else {
-        show_by_minimize(window)
+    match window.hidden_pos {
+        Some(pos) => show_by_corner(window, pos),
+        None => show_by_minimize(window),
     }
 }
 
