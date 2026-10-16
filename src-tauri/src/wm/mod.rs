@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use tauri::Manager;
 use tokio::time::Duration;
 
-use crate::state::{AppState, ScreenRecordingStatus, WindowRef};
+use crate::state::{AppState, ScreenRecordingStatus, WindowControlMode, WindowRef};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -113,13 +113,17 @@ pub fn request_window_access() {
 ///    current values. Window titles change over a window's lifetime (e.g.
 ///    KeePassXC appends its database/lock state), and the macOS hide/show path
 ///    looks a window up by its *current* `AXTitle` — a stale stored title makes
-///    that lookup fail, so the window silently refuses to hide. Hidden windows
-///    (absent from the enumeration) keep the title captured when they were hidden.
+///    that lookup fail, so the window silently refuses to hide. On Windows,
+///    `SW_HIDE` removes a hidden window from the enumeration, so its title is
+///    left as-is until shown again; on macOS, a minimized window is likewise
+///    absent, but a corner-hidden one (`WindowControlMode::Hide`) normally
+///    stays enumerable and its title keeps refreshing even while hidden.
 /// 2. **Removals**: any `WindowRef` whose `platform_id` is no longer present
 ///    in the live window list is removed from every Context it belongs to,
-///    *unless* it is currently hidden by us (`hidden`) — a hidden window is
-///    minimized and thus absent from the on-screen enumeration, but still
-///    exists and must remain tracked.
+///    *unless* it is currently hidden by us (`hidden`) — a hidden window can
+///    be absent from the on-screen enumeration (always on Windows via
+///    `SW_HIDE`, and on macOS when minimized; a corner-hidden window normally
+///    stays enumerable), but still exists and must remain tracked.
 /// 3. **Additions**: any live window whose `platform_id` is not tracked in any
 ///    Context is added as a new `WindowRef` to the Context the user is
 ///    currently working in, as resolved by
@@ -199,9 +203,10 @@ pub fn update_windows(app: &tauri::AppHandle) {
     }
 
     // Remove closed windows from every context. Windows we have intentionally
-    // hidden are exempt: a hidden window is minimized and therefore absent
-    // from the on-screen enumeration, but it still exists and must stay
-    // tracked so it can be shown again.
+    // hidden are exempt: on Windows a hidden window (SW_HIDE) is absent from
+    // the on-screen enumeration, and on macOS a minimized one is too — a
+    // corner-hidden one normally stays enumerable, but the exemption is kept
+    // regardless so it still exists and stays tracked so it can be shown again.
     for ctx in &mut data.contexts {
         let before = ctx.windows.len();
         ctx.windows.retain(|w| current_ids.contains(&w.platform_id) || w.hidden);
@@ -223,6 +228,8 @@ pub fn update_windows(app: &tauri::AppHandle) {
             hidden: false,
             #[cfg(target_os = "macos")]
             hidden_z: None,
+            #[cfg(target_os = "macos")]
+            hidden_pos: None,
         });
         changed = true;
     }
@@ -232,46 +239,55 @@ pub fn update_windows(app: &tauri::AppHandle) {
     }
 }
 
-/// Hides the given window by minimizing it (macOS) or calling
-/// `ShowWindow(SW_HIDE)` (Windows).
+/// Hides the given window: on macOS, per `mode` — moving it to a screen
+/// corner (`WindowControlMode::Hide`) or minimizing it
+/// (`WindowControlMode::Minimize`); on Windows, always `ShowWindow(SW_HIDE)`,
+/// which ignores `mode`.
 ///
-/// On macOS the window is minimized via the Accessibility API
-/// (`AXMinimized = true`); un-minimizing restores its position and size. On
-/// Windows, `SW_HIDE` preserves the window's position internally. Both set
-/// `window.hidden` — the marker that keeps the background poll from dropping
-/// the (no longer enumerable) window and lets the show path find it.
+/// On macOS, `Hide` sets `AXPosition` to a corner of the primary display
+/// (capturing the original position first so `show_window` can restore it);
+/// `Minimize` sets `AXMinimized = true` (un-minimizing restores position and
+/// size natively). On Windows, `SW_HIDE` preserves the window's position
+/// internally. All paths set `window.hidden` — the marker that keeps the
+/// background poll from dropping the (no longer enumerable) window and lets
+/// the show path find it.
 ///
 /// # Arguments
 /// - `window`: Mutable reference to the tracked window. On macOS, `pid` must
 ///   be non-zero and `window_title` must match the current AX title exactly.
+/// - `mode`: Which mechanism to hide with. See [`WindowControlMode`].
 ///
 /// # Errors
 /// Returns an `Err` string if the window cannot be found or the OS call fails
 /// (e.g. Accessibility permission not granted on macOS).
-pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
+pub fn hide_window(window: &mut WindowRef, mode: WindowControlMode) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        macos::hide_window(window)
+        macos::hide_window(window, mode)
     }
     #[cfg(target_os = "windows")]
     {
-        win32::hide_window(window)
+        win32::hide_window(window, mode)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = window;
+        let _ = (window, mode);
         Err("hide_window is not supported on this platform".to_string())
     }
 }
 
-/// Shows the given window by un-minimizing it (macOS) or calling
-/// `ShowWindow(SW_SHOW)` (Windows).
+/// Shows the given window. No mode parameter: on macOS, which mechanism to
+/// reverse is inferred from `window.hidden_pos` (see
+/// [`WindowControlMode`]) rather than passed in, so this signature stays the
+/// same across both modes; on Windows, always `ShowWindow(SW_SHOW)`.
 ///
-/// On macOS, the window is un-minimized (`AXMinimized = false`, which restores
-/// its previous position and size) and the `hidden` marker is cleared on
-/// success; if the marker is already clear the window is assumed visible and
-/// `Ok(())` is returned immediately. On Windows, `SW_SHOW` restores the window
-/// to its last known position and the marker is cleared unconditionally.
+/// On macOS, a corner-hidden window has `AXPosition` restored to the point
+/// captured by `hide_window`; a minimized window is un-minimized
+/// (`AXMinimized = false`, which restores its previous position and size
+/// natively). Either way the `hidden` marker is cleared on success; if the
+/// marker is already clear the window is assumed visible and `Ok(())` is
+/// returned immediately. On Windows, `SW_SHOW` restores the window to its
+/// last known position and the marker is cleared unconditionally.
 ///
 /// # Arguments
 /// - `window`: Mutable reference to the tracked window.

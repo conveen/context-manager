@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::WindowInfo;
-use crate::state::WindowRef;
+use crate::state::{WindowControlMode, WindowRef};
 
 /// State threaded through the `EnumWindows` callback via `LPARAM`.
 ///
@@ -155,10 +155,14 @@ pub fn enumerate(our_pid: u32) -> Vec<WindowInfo> {
 /// that stays `SW_HIDE`-hidden is never re-enumerated — and the show path
 /// (which only targets marked windows) would never un-hide it.
 ///
+/// `mode` is accepted for signature parity with the macOS implementation but
+/// ignored: this platform always uses `SW_HIDE`.
+///
 /// # Errors
 /// Always returns `Ok(())`. `SW_HIDE` is a fire-and-forget call; if the HWND
 /// is invalid or the window has already been destroyed the OS ignores it.
-pub fn hide_window(window: &mut WindowRef) -> Result<(), String> {
+pub fn hide_window(window: &mut WindowRef, mode: WindowControlMode) -> Result<(), String> {
+    let _ = mode;
     window.hidden = true;
     unsafe {
         let _ = ShowWindow(HWND(window.platform_id as *mut _), SW_HIDE);
