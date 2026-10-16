@@ -96,6 +96,43 @@ pub fn screen_recording_status(our_pid: u32) -> ScreenRecordingStatus {
     }
 }
 
+/// Returns the ids of **every** top-level window that currently exists —
+/// including ones [`enumerate`] deliberately filters out, such as windows we
+/// have hidden or minimized.
+///
+/// This is the liveness probe the removal pass in [`update_windows`] needs.
+/// Absence from `enumerate` has two causes that cannot be told apart from that
+/// list alone — we hid the window, or the user closed it — and `WindowRef`'s
+/// `hidden` marker only records the *intent* to hide, not that the OS window
+/// still exists. Membership here settles it.
+///
+/// # Returns
+/// `None` when liveness could not be determined (the OS call failed). Callers
+/// must treat that as "no information" and leave tracked windows alone, rather
+/// than pruning windows that may well be alive.
+///
+/// # Preconditions/Assumptions
+/// - Unlike [`enumerate`], no filtering is applied: no layer/visibility/title
+///   checks, and windows owned by this process are included. The result is
+///   only ever membership-tested against already-tracked ids, none of which
+///   are ours.
+/// - On macOS this does **not** require Screen Recording permission: it reads
+///   `kCGWindowNumber`, and only `kCGWindowName` is gated behind that grant.
+pub fn live_window_ids() -> Option<HashSet<u64>> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::live_window_ids()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        win32::live_window_ids()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
 /// Prompts for any OS permission window enumeration depends on, if it has never
 /// been answered. Called once at startup; a no-op off macOS.
 pub fn request_window_access() {
@@ -117,9 +154,14 @@ pub fn request_window_access() {
 ///    (absent from the enumeration) keep the title captured when they were hidden.
 /// 2. **Removals**: any `WindowRef` whose `platform_id` is no longer present
 ///    in the live window list is removed from every Context it belongs to,
-///    *unless* it is currently hidden by us (`hidden`) — a hidden window is
-///    minimized and thus absent from the on-screen enumeration, but still
-///    exists and must remain tracked.
+///    *unless* it is currently hidden by us (`hidden`) **and still exists**
+///    per [`live_window_ids`] — a hidden window is minimized (or `SW_HIDE`n)
+///    and thus absent from the on-screen enumeration, but still exists and
+///    must remain tracked. The liveness probe is what keeps that exemption
+///    from also covering windows the user closed *while* they were hidden,
+///    which would otherwise linger until their Context was next shown (the
+///    show path clears `hidden`, ending the exemption). If the probe returns
+///    `None` the exemption applies unconditionally, as it did before.
 /// 3. **Additions**: any live window whose `platform_id` is not tracked in any
 ///    Context is added as a new `WindowRef` to the Context the user is
 ///    currently working in, as resolved by
@@ -157,6 +199,9 @@ pub fn request_window_access() {
 pub fn update_windows(app: &tauri::AppHandle) {
     let our_pid = std::process::id();
     let current = enumerate(our_pid);
+    // Probed alongside the enumeration, before the lock is taken, so neither
+    // OS call happens while `data` is held (see the Preconditions above).
+    let live_ids = live_window_ids();
 
     let current_ids: HashSet<u64> = current.iter().map(|w| w.platform_id).collect();
 
@@ -199,12 +244,19 @@ pub fn update_windows(app: &tauri::AppHandle) {
     }
 
     // Remove closed windows from every context. Windows we have intentionally
-    // hidden are exempt: a hidden window is minimized and therefore absent
-    // from the on-screen enumeration, but it still exists and must stay
-    // tracked so it can be shown again.
+    // hidden are exempt — a hidden window is deliberately absent from the
+    // on-screen enumeration, but still exists and must stay tracked so it can
+    // be shown again — but only while the OS agrees they still exist. Without
+    // that second test the exemption also covers windows closed *while*
+    // hidden, which then linger until their Context is next shown (and across
+    // restarts, since `hidden` is persisted). A `None` probe means liveness is
+    // unknown, so the exemption stands rather than risk pruning live windows.
     for ctx in &mut data.contexts {
         let before = ctx.windows.len();
-        ctx.windows.retain(|w| current_ids.contains(&w.platform_id) || w.hidden);
+        ctx.windows.retain(|w| {
+            current_ids.contains(&w.platform_id)
+                || (w.hidden && live_ids.as_ref().is_none_or(|live| live.contains(&w.platform_id)))
+        });
         changed |= ctx.windows.len() != before;
     }
 
